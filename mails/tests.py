@@ -23,9 +23,12 @@ from rules.models import AcknowledgementTemplate
 from printing.models import PrintJob, PrintLog
 
 
-def make_raw_message():
+def make_raw_message(
+    message_id="<received-001@example.test>",
+    attachment_filename="report.pdf",
+):
     message = EmailMessage()
-    message["Message-ID"] = "<received-001@example.test>"
+    message["Message-ID"] = message_id
     message["From"] = "Sender <sender@example.test>"
     message["To"] = "recipient@example.test"
     message["Subject"] = "A test message"
@@ -35,7 +38,7 @@ def make_raw_message():
         b"%PDF-1.7 sample",
         maintype="application",
         subtype="pdf",
-        filename="report.pdf",
+        filename=attachment_filename,
     )
     return message.as_bytes()
 
@@ -96,6 +99,33 @@ class MailStorageTests(TestCase):
                 self.assertEqual(attachment.size_bytes, len(b"%PDF-1.7 sample"))
                 self.assertTrue(attachment.file.name.startswith("mail/2025/03/"))
                 self.assertEqual(ReceivedEmail.objects.count(), 1)
+
+    def test_long_message_id_and_attachment_name_fit_file_field_paths(self):
+        long_message_id = f"<{'a' * 200}@example.test>"
+        long_attachment_name = f"{'report' * 60}.pdf"
+        raw_message = make_raw_message(long_message_id, long_attachment_name)
+
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                email, created = store_message(
+                    raw_message,
+                    folder="INBOX",
+                    uid=79,
+                    uidvalidity=987,
+                    max_attachment_bytes=1024,
+                )
+
+        self.assertTrue(created)
+        self.assertLessEqual(
+            len(email.raw_email_file.name),
+            ReceivedEmail._meta.get_field("raw_email_file").max_length,
+        )
+        attachment = email.attachments.get()
+        self.assertEqual(attachment.filename, long_attachment_name)
+        self.assertLessEqual(
+            len(attachment.file.name),
+            EmailAttachment._meta.get_field("file").max_length,
+        )
 
     def test_oversized_attachment_is_listed_without_saving_its_content(self):
         raw_message = make_raw_message()

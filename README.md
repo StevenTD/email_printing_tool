@@ -82,7 +82,10 @@ downloads, print history, and manual print/status controls.
 
 The worker polls the configured IMAP folder (default `INBOX`) at the interval
 stored in the application configuration (default 60 seconds). It saves `.eml`
-files and attachments under `media/mail/<year>/<month>/<message-id>/`, stores
+files and attachments under `media/mail/<year>/<month>/<message-key>/`. The
+message key and stored filenames are shortened and hashed to fit Windows and
+Django file-path limits; original attachment names remain in the inbox and are
+used for downloads. The worker stores
 message metadata and bodies in SQLite, and marks successfully stored messages
 as read. Duplicate Message-IDs and IMAP UIDs are constrained in the database.
 Worker errors are available in Django admin under **Worker logs**. Attachment
