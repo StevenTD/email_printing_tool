@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+
+{% block title %}{{ email.subject|default:"Email detail" }} · MailPrint{% endblock %}
+
+{% block content %}
+<div class="mx-auto" style="max-width: 1500px">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+    <div>
+      <a href="{% url 'mails:inbox' %}" class="link-secondary text-decoration-none">← Inbox</a>
+      <h1 class="h2 mt-2 mb-1">{{ email.subject|default:"(no subject)" }}</h1>
+      <div class="text-body-secondary">{{ email.sender|default:"(unknown sender)" }}</div>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      <a class="btn btn-outline-primary" href="{% url 'mails:acknowledgement' email.pk %}">
+        Send acknowledgement
+      </a>
+      {% if email.status == "printed" %}
+        <form method="post" action="{% url 'mails:action' email.pk 'reprint' %}">
+          {% csrf_token %}
+          <button class="btn btn-primary" type="submit">Reprint</button>
+        </form>
+      {% else %}
+        <form method="post" action="{% url 'mails:action' email.pk 'print' %}">
+          {% csrf_token %}
+          <button class="btn btn-primary" type="submit">Print now</button>
+        </form>
+      {% endif %}
+      {% if mailprint_is_admin %}
+        <form method="post" action="{% url 'mails:action' email.pk 'mark_printed' %}">
+          {% csrf_token %}
+          <button class="btn btn-outline-success" type="submit">Mark as printed</button>
+        </form>
+        <form method="post" action="{% url 'mails:action' email.pk 'mark_printing' %}">
+          {% csrf_token %}
+          <button class="btn btn-outline-primary" type="submit">Mark as printing</button>
+        </form>
+        <form method="post" action="{% url 'mails:action' email.pk 'hold' %}">
+          {% csrf_token %}
+          <button class="btn btn-outline-warning" type="submit">Hold</button>
+        </form>
+        <form method="post" action="{% url 'mails:action' email.pk 'skip' %}">
+          {% csrf_token %}
+          <button class="btn btn-outline-secondary" type="submit">Ignore</button>
+        </form>
+        <form method="post" action="{% url 'mails:action' email.pk 'reset_status' %}">
+          {% csrf_token %}
+          <button class="btn btn-outline-dark" type="submit">Reset status</button>
+        </form>
+        <form method="post" action="{% url 'mails:action' email.pk 'delete' %}">
+          {% csrf_token %}
+          <button class="btn btn-outline-danger" type="submit">Delete</button>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-12 col-xl-8">
+      <section class="card shadow-sm mb-3">
+        <div class="card-header bg-white d-flex justify-content-between align-items-center">
+          <h2 class="h5 mb-0">Email</h2>
+          <div class="d-flex gap-2">
+            <span class="badge text-bg-secondary">{{ email.get_status_display }}</span>
+            {% if email.acknowledged %}
+              <span class="badge text-bg-success">Acknowledged</span>
+            {% endif %}
+          </div>
+        </div>
+        <div class="card-body">
+          <dl class="row mb-0">
+            <dt class="col-sm-3">From</dt><dd class="col-sm-9">{{ email.sender|default:"—" }}</dd>
+            <dt class="col-sm-3">To</dt><dd class="col-sm-9">{{ email.recipients|join:", "|default:"—" }}</dd>
+            <dt class="col-sm-3">Received</dt><dd class="col-sm-9">{% if email.date_received %}{{ email.date_received|date:"Y-m-d H:i:s T" }}{% else %}—{% endif %}</dd>
+            <dt class="col-sm-3">Message-ID</dt><dd class="col-sm-9 text-break">{{ email.message_id|default:"—" }}</dd>
+          </dl>
+          {% if email.error_message %}
+            <div class="alert alert-danger mt-3 mb-0">{{ email.error_message }}</div>
+          {% endif %}
+        </div>
+      </section>
+
+      <section class="card shadow-sm mb-3">
+        <div class="card-header bg-white"><h2 class="h5 mb-0">Message body</h2></div>
+        <div class="card-body">
+          {% if safe_body_html %}
+            <div class="email-preview">{{ safe_body_html|safe }}</div>
+          {% else %}
+            <div class="text-break">{{ email.body_text|linebreaksbr|default:"(No body content.)" }}</div>
+          {% endif %}
+        </div>
+        {% if email.raw_email_file %}
+          <div class="card-footer bg-white">
+            <a href="{% url 'mails:download_raw_email' email.pk %}">Download raw .eml</a>
+          </div>
+        {% endif %}
+      </section>
+
+      <section class="card shadow-sm mb-3">
+        <div class="card-header bg-white"><h2 class="h5 mb-0">Attachments</h2></div>
+        <div class="card-body">
+          {% for attachment in email.attachments.all %}
+            <div class="border rounded p-3 mb-3">
+              <div class="d-flex flex-wrap justify-content-between gap-2">
+                <div class="text-break">
+                  <strong>{{ attachment.filename }}</strong>
+                  <div class="small text-body-secondary">
+                    {{ attachment.content_type|default:"unknown type" }} · {{ attachment.size_bytes|filesizeformat }}
+                    {% if attachment.printable %}· printable{% else %}· not printable{% endif %}
+                  </div>
+                </div>
+                {% if attachment.file %}
+                  <a class="btn btn-sm btn-outline-primary align-self-start" href="{% url 'mails:download_attachment' attachment.pk %}">Download</a>
+                {% endif %}
+              </div>
+              {% if attachment.file and attachment.content_type|slice:":6" == "image/" %}
+                <img class="img-fluid rounded border mt-3" style="max-height: 360px" src="{% url 'mails:preview_attachment' attachment.pk %}" alt="{{ attachment.filename }}">
+              {% elif attachment.file and attachment.content_type == "application/pdf" %}
+                <a class="d-inline-block mt-3" href="{% url 'mails:preview_attachment' attachment.pk %}" target="_blank" rel="noopener noreferrer">Open PDF preview</a>
+              {% endif %}
+              {% if attachment.conversion_error %}
+                <div class="small text-warning-emphasis mt-2">{{ attachment.conversion_error }}</div>
+              {% endif %}
+            </div>
+          {% empty %}
+            <p class="text-body-secondary mb-0">No attachments.</p>
+          {% endfor %}
+        </div>
+      </section>
+    </div>
+
+    <div class="col-12 col-xl-4">
+      <section class="card shadow-sm mb-3">
+        <div class="card-header bg-white"><h2 class="h5 mb-0">Print history</h2></div>
+        <div class="list-group list-group-flush">
+          {% for entry in email.print_logs.all %}
+            <div class="list-group-item">
+              <div class="d-flex justify-content-between gap-2">
+                <strong>{{ entry.get_result_display }}</strong>
+                <small class="text-body-secondary text-nowrap">{{ entry.printed_at|date:"Y-m-d H:i" }}</small>
+              </div>
+              <div class="small text-break">{{ entry.filename|default:"Email" }}{% if entry.printer_name %} · {{ entry.printer_name }}{% endif %}</div>
+              {% if entry.details %}<div class="small text-body-secondary">{{ entry.details }}</div>{% endif %}
+              {% if entry.user %}<div class="small text-body-secondary">By {{ entry.user.get_username }}</div>{% endif %}
+            </div>
+          {% empty %}
+            <div class="list-group-item text-body-secondary">No print history.</div>
+          {% endfor %}
+        </div>
+      </section>
+
+      <section class="card shadow-sm">
+        <div class="card-header bg-white"><h2 class="h5 mb-0">Acknowledgements</h2></div>
+        <div class="list-group list-group-flush">
+          {% for entry in email.acknowledgements.all %}
+            <div class="list-group-item">
+              <strong>{{ entry.recipient }}</strong>
+              <div class="small text-body-secondary">
+                {{ entry.get_status_display }}
+                {% if entry.sent_at %} · {{ entry.sent_at|date:"Y-m-d H:i" }}{% endif %}
+                {% if entry.sent_by %} · {{ entry.sent_by.get_username }}{% endif %}
+              </div>
+              {% if entry.error_message %}<div class="small text-danger">{{ entry.error_message }}</div>{% endif %}
+              <details class="mt-2"><summary class="small">Message</summary><pre class="small text-wrap mb-0 mt-2">{{ entry.body }}</pre></details>
+            </div>
+          {% empty %}
+            <div class="list-group-item text-body-secondary">No acknowledgement history.</div>
+          {% endfor %}
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+{% endblock %}

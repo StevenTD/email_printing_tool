@@ -1,0 +1,66 @@
+<div class="row g-3">
+  <div class="col-6 col-xl-3">
+    <div class="card h-100 shadow-sm border-primary-subtle">
+      <div class="card-body">
+        <div class="text-body-secondary">New</div>
+        <div class="display-6 fw-semibold">{{ new_count }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-xl-3">
+    <div class="card h-100 shadow-sm border-warning-subtle">
+      <div class="card-body">
+        <div class="text-body-secondary">Held</div>
+        <div class="display-6 fw-semibold">{{ held_count }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-xl-3">
+    <div class="card h-100 shadow-sm border-success-subtle">
+      <div class="card-body">
+        <div class="text-body-secondary">Printed today</div>
+        <div class="display-6 fw-semibold">{{ printed_today_count }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-xl-3">
+    <div class="card h-100 shadow-sm border-danger-subtle">
+      <div class="card-body">
+        <div class="text-body-secondary">Failed</div>
+        <div class="display-6 fw-semibold">{{ failed_count }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mt-1">
+  <div class="col-md-6">
+    <div class="card h-100 shadow-sm">
+      <div class="card-body">
+        <div class="text-body-secondary">Worker</div>
+        {% if worker_running %}
+          <span class="badge text-bg-success fs-6">Running</span>
+        {% else %}
+          <span class="badge text-bg-secondary fs-6">Stopped</span>
+        {% endif %}
+        <div class="small text-body-secondary mt-2">
+          Last fetch:
+          {% if last_fetch_at %}{{ last_fetch_at|date:"Y-m-d H:i:s" }}{% else %}Never{% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card h-100 shadow-sm">
+      <div class="card-body">
+        <div class="text-body-secondary mb-1">Automatic printing</div>
+        {% if auto_print_enabled %}
+          <span class="badge text-bg-success fs-6">ON</span>
+        {% else %}
+          <span class="badge text-bg-secondary fs-6">OFF</span>
+        {% endif %}
+        <div class="small text-body-secondary mt-2">Control is available in settings.</div>
+      </div>
+    </div>
+  </div>
+</div>

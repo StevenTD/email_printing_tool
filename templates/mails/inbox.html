@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+
+{% block title %}Inbox · MailPrint{% endblock %}
+
+{% block content %}
+<div class="mx-auto" style="max-width: 1700px">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <div>
+      <h1 class="h2 mb-1">Inbox</h1>
+      <p class="text-body-secondary mb-0">Search and manage received email</p>
+    </div>
+  </div>
+
+  <form id="inbox-filter-form" class="card card-body shadow-sm mb-3" method="get">
+    <div class="row g-2 align-items-end">
+      <div class="col-12 col-md-5 col-xl-4">
+        <label class="form-label" for="filter-q">Search</label>
+        <input id="filter-q" class="form-control" type="search" name="q" value="{{ filters.q }}" placeholder="Sender, subject, or Message-ID">
+      </div>
+      <div class="col-6 col-md-3 col-xl-2">
+        <label class="form-label" for="filter-status">Status</label>
+        <select id="filter-status" class="form-select" name="status">
+          <option value="">All statuses</option>
+          {% for value, label in status_choices %}
+            <option value="{{ value }}" {% if filters.status == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-6 col-md-3 col-xl-2">
+        <label class="form-label" for="filter-attachment">Attachments</label>
+        <select id="filter-attachment" class="form-select" name="has_attachment">
+          <option value="">Any</option>
+          <option value="yes" {% if filters.has_attachment == "yes" %}selected{% endif %}>Has attachment</option>
+          <option value="no" {% if filters.has_attachment == "no" %}selected{% endif %}>No attachment</option>
+        </select>
+      </div>
+      <div class="col-12 col-md-1">
+        <button class="btn btn-primary w-100" type="submit">Filter</button>
+      </div>
+    </div>
+  </form>
+
+  <form id="bulk-action-form" method="post" action="{% url 'mails:bulk_action' %}">
+    {% csrf_token %}
+  </form>
+  <div class="d-flex flex-wrap gap-2 mb-2">
+    <span class="small text-body-secondary align-self-center me-1">Apply to selected:</span>
+    <button class="btn btn-sm btn-outline-primary" type="submit" form="bulk-action-form" name="action" value="print">Print</button>
+    {% if mailprint_is_admin %}
+      <button class="btn btn-sm btn-outline-success" type="submit" form="bulk-action-form" name="action" value="mark_printed">Mark printed</button>
+      <button class="btn btn-sm btn-outline-warning" type="submit" form="bulk-action-form" name="action" value="hold">Hold</button>
+      <button class="btn btn-sm btn-outline-secondary" type="submit" form="bulk-action-form" name="action" value="skip">Ignore</button>
+    {% endif %}
+  </div>
+
+  <div class="card shadow-sm">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th scope="col" class="text-center"><span class="visually-hidden">Select</span></th>
+            <th scope="col">Status</th>
+            <th scope="col">Sender</th>
+            <th scope="col">Subject</th>
+            <th scope="col">Received</th>
+            <th scope="col">Files</th>
+            <th scope="col">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="inbox-rows"
+               hx-get="{% url 'mails:inbox_rows' %}"
+               hx-trigger="every 15s"
+               hx-include="#inbox-filter-form"
+               hx-swap="innerHTML">
+          {% include "mails/_inbox_rows.html" %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <nav class="d-flex justify-content-between align-items-center mt-3" aria-label="Inbox pages">
+    <span class="small text-body-secondary">
+      Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }} · {{ page_obj.paginator.count }} emails
+    </span>
+    <div class="btn-group">
+      {% if page_obj.has_previous %}
+        <a class="btn btn-outline-secondary btn-sm" href="?q={{ filters.q|urlencode }}&status={{ filters.status|urlencode }}&has_attachment={{ filters.has_attachment|urlencode }}&page={{ page_obj.previous_page_number }}">Previous</a>
+      {% endif %}
+      {% if page_obj.has_next %}
+        <a class="btn btn-outline-secondary btn-sm" href="?q={{ filters.q|urlencode }}&status={{ filters.status|urlencode }}&has_attachment={{ filters.has_attachment|urlencode }}&page={{ page_obj.next_page_number }}">Next</a>
+      {% endif %}
+    </div>
+  </nav>
+</div>
+{% endblock %}

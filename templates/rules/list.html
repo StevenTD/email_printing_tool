@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block title %}Rules · MailPrint{% endblock %}
+
+{% block content %}
+<div class="mx-auto" style="max-width: 1500px">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+    <div>
+      <h1 class="h2 mb-1">Filtering rules</h1>
+      <p class="text-body-secondary mb-0">Rules run by ascending priority; the first matching rule wins.</p>
+    </div>
+    <a class="btn btn-primary" href="{% url 'rules:create' %}">Add rule</a>
+  </div>
+
+  <div class="card shadow-sm mb-4">
+    <div class="card-header bg-white"><h2 class="h5 mb-0">Rules</h2></div>
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>Priority</th><th>Rule</th><th>Sender</th><th>Subject</th>
+            <th>Attachment</th><th>Action</th><th>Printer</th><th>Auto-print</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for rule in rules %}
+            <tr>
+              <td>{{ rule.priority }}</td>
+              <td>
+                <a href="{% url 'rules:edit' rule.pk %}" class="fw-semibold">{{ rule.name }}</a>
+                {% if not rule.enabled %}<span class="badge text-bg-secondary">Disabled</span>{% endif %}
+              </td>
+              <td>{{ rule.get_sender_match_display }}{% if rule.sender_value %}: {{ rule.sender_value }}{% endif %}</td>
+              <td>{{ rule.get_subject_match_display }}{% if rule.subject_value %}: {{ rule.subject_value }}{% endif %}</td>
+              <td>{{ rule.attachment_type|default:"Any" }}</td>
+              <td>{{ rule.get_action_display }}</td>
+              <td>{{ rule.target_printer|default:"Default" }}</td>
+              <td>
+                {% if rule.auto_print_override == None %}
+                  Follow schedule
+                {% elif rule.auto_print_override %}
+                  May bypass schedule
+                {% else %}
+                  Disabled
+                {% endif %}
+              </td>
+              <td>
+                <form method="post" action="{% url 'rules:delete' rule.pk %}">
+                  {% csrf_token %}
+                  <button class="btn btn-sm btn-outline-danger" type="submit">Delete</button>
+                </form>
+              </td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="9" class="text-center text-body-secondary py-4">No rules yet. Unmatched email uses the configured default action.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <section class="card shadow-sm">
+    <div class="card-header bg-white"><h2 class="h5 mb-0">Default action and auto-print schedule</h2></div>
+    <div class="card-body">
+      <p class="small text-body-secondary">
+        The global auto-print switch is a hard stop. When it is OFF, print actions are held.
+        Set <code>DJANGO_TIME_ZONE</code> in <code>.env</code> to the print PC's local time zone.
+      </p>
+      <form method="post" action="{% url 'rules:schedule' %}">
+        {% csrf_token %}
+        {% if schedule_form.non_field_errors %}
+          <div class="alert alert-danger">{{ schedule_form.non_field_errors }}</div>
+        {% endif %}
+        <div class="row g-3">
+          <div class="col-12 col-lg-4">
+            <label class="form-label" for="{{ schedule_form.default_action.id_for_label }}">{{ schedule_form.default_action.label }}</label>
+            {{ schedule_form.default_action }}
+            {{ schedule_form.default_action.errors }}
+          </div>
+          <div class="col-12 col-lg-4">
+            <div class="form-check mt-lg-4">
+              {{ schedule_form.enabled }}
+              <label class="form-check-label" for="{{ schedule_form.enabled.id_for_label }}">{{ schedule_form.enabled.label }}</label>
+            </div>
+          </div>
+          <div class="col-6 col-lg-2">
+            <label class="form-label" for="{{ schedule_form.start.id_for_label }}">{{ schedule_form.start.label }}</label>
+            {{ schedule_form.start }}
+            {{ schedule_form.start.errors }}
+          </div>
+          <div class="col-6 col-lg-2">
+            <label class="form-label" for="{{ schedule_form.end.id_for_label }}">{{ schedule_form.end.label }}</label>
+            {{ schedule_form.end }}
+            {{ schedule_form.end.errors }}
+          </div>
+          <div class="col-12">
+            <label class="form-label">{{ schedule_form.weekdays.label }}</label>
+            <div class="d-flex flex-wrap gap-3">
+              {{ schedule_form.weekdays }}
+            </div>
+            {{ schedule_form.weekdays.errors }}
+          </div>
+          <div class="col-12">
+            <button class="btn btn-primary" type="submit">Save defaults and schedule</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </section>
+</div>
+{% endblock %}

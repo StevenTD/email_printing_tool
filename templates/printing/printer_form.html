@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }} · MailPrint{% endblock %}
+
+{% block content %}
+<div class="mx-auto" style="max-width: 900px">
+  <div class="mb-3">
+    <a href="{% url 'printing:printers' %}" class="link-secondary text-decoration-none">← Printers</a>
+    <h1 class="h2 mt-2">{{ title }}</h1>
+  </div>
+  <form method="post" class="card card-body shadow-sm">
+    {% csrf_token %}
+    {% if form.non_field_errors %}
+      <div class="alert alert-danger">{{ form.non_field_errors }}</div>
+    {% endif %}
+    {% for field in form %}
+      <div class="mb-3">
+        {% if field.field.widget.input_type == "checkbox" %}
+          <div class="form-check">
+            {{ field }}
+            <label class="form-check-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+          </div>
+        {% else %}
+          <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+          {{ field }}
+        {% endif %}
+        {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+        {% for error in field.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}
+      </div>
+    {% endfor %}
+    <p class="small text-body-secondary">The exact Windows printer name is used for SumatraPDF output. A profile can also be selected by filtering rules.</p>
+    <div class="d-flex gap-2">
+      <button class="btn btn-primary" type="submit">Save profile</button>
+      <a class="btn btn-outline-secondary" href="{% url 'printing:printers' %}">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

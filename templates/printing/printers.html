@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+
+{% block title %}Printers · MailPrint{% endblock %}
+
+{% block content %}
+<div class="mx-auto" style="max-width: 1500px">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+    <div>
+      <h1 class="h2 mb-1">Printers</h1>
+      <p class="text-body-secondary mb-0">Windows printer status, MailPrint profiles, and queued Windows jobs.</p>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{% url 'printing:printers' %}">Refresh</a>
+      <a class="btn btn-primary" href="{% url 'printing:profile_create' %}">Add printer profile</a>
+    </div>
+  </div>
+
+  {% if inventory_error %}
+    <div class="alert alert-danger" role="alert">{{ inventory_error }}</div>
+  {% endif %}
+  <div class="alert alert-info">
+    Test pages are sent to the selected printer only when dry-run mode is off.
+    Dry-run test pages are saved under <code>dry_run_output\test_pages</code>.
+  </div>
+
+  <section class="card shadow-sm mb-3">
+    <div class="card-header bg-white"><h2 class="h5 mb-0">SumatraPDF</h2></div>
+    <div class="card-body">
+      <form method="post" action="{% url 'printing:sumatra_settings' %}" class="row g-3 align-items-end">
+        {% csrf_token %}
+        <div class="col-12 col-lg-9">
+          <label class="form-label" for="{{ sumatra_form.sumatra_pdf_path.id_for_label }}">{{ sumatra_form.sumatra_pdf_path.label }}</label>
+          {{ sumatra_form.sumatra_pdf_path }}
+          <div class="form-text">{{ sumatra_form.sumatra_pdf_path.help_text }}</div>
+        </div>
+        <div class="col-12 col-lg-3">
+          <button class="btn btn-outline-primary" type="submit">Save SumatraPDF path</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  {% for printer in printers %}
+    <section class="card shadow-sm mb-3">
+      <div class="card-header bg-white d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <div>
+          <h2 class="h5 mb-1">{{ printer.alias|default:printer.name }}</h2>
+          <div class="small text-body-secondary text-break">{{ printer.name }}</div>
+          <div class="d-flex flex-wrap gap-2 mt-2">
+            {% if printer.is_default %}<span class="badge text-bg-primary">MailPrint default</span>{% endif %}
+            {% if printer.is_system_default %}<span class="badge text-bg-secondary">Windows default</span>{% endif %}
+            {% if printer.dedicated_purpose %}<span class="badge text-bg-info">{{ printer.dedicated_purpose }}</span>{% endif %}
+          </div>
+        </div>
+        <span class="badge {% if printer.status == 'ready' %}text-bg-success{% elif printer.status == 'error' %}text-bg-danger{% else %}text-bg-warning{% endif %}">
+          {{ printer.status|title }}{% if printer.status_detail != "Ready" %}: {{ printer.status_detail }}{% endif %}
+        </span>
+      </div>
+      <div class="card-body">
+        <div class="d-flex flex-wrap gap-2 mb-3">
+          {% if printer.profile %}
+            <a class="btn btn-sm btn-outline-primary" href="{% url 'printing:profile_edit' printer.profile.pk %}">Edit profile</a>
+          {% else %}
+            <a class="btn btn-sm btn-outline-primary" href="{% url 'printing:profile_create' %}?printer_name={{ printer.name|urlencode }}">Configure profile</a>
+          {% endif %}
+          {% if printer.installed %}
+            <form method="post" action="{% url 'printing:test_page' %}">
+              {% csrf_token %}
+              <input type="hidden" name="printer_name" value="{{ printer.name }}">
+              <button class="btn btn-sm btn-outline-success" type="submit">Print test page</button>
+            </form>
+          {% endif %}
+          <span class="small text-body-secondary align-self-center">{{ printer.job_count }} Windows queue job(s)</span>
+        </div>
+
+        {% if printer.profile %}
+          <div class="small text-body-secondary mb-3">
+            Paper: {{ printer.profile.paper_size }} ·
+            Duplex: {% if printer.profile.duplex %}On{% else %}Off{% endif %} ·
+            Color: {{ printer.profile.get_color_mode_display }}
+          </div>
+        {% endif %}
+
+        {% if printer.queue_error %}
+          <div class="small text-danger">{{ printer.queue_error }}</div>
+        {% elif printer.jobs %}
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+              <thead><tr><th>Job ID</th><th>Document</th><th>User</th><th>Status</th><th>Pages</th><th></th></tr></thead>
+              <tbody>
+                {% for job in printer.jobs %}
+                  <tr>
+                    <td>{{ job.job_id }}</td>
+                    <td class="text-break">{{ job.document }}</td>
+                    <td>{{ job.user|default:"—" }}</td>
+                    <td>{{ job.status }}</td>
+                    <td>{{ job.pages_printed }}{% if job.total_pages %} / {{ job.total_pages }}{% endif %}</td>
+                    <td>
+                      <form method="post" action="{% url 'printing:job_cancel' %}">
+                        {% csrf_token %}
+                        <input type="hidden" name="printer_name" value="{{ printer.name }}">
+                        <input type="hidden" name="job_id" value="{{ job.job_id }}">
+                        <button class="btn btn-sm btn-outline-danger" type="submit">Cancel</button>
+                      </form>
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="small text-body-secondary mb-0">No jobs in the Windows print queue.</p>
+        {% endif %}
+      </div>
+    </section>
+  {% empty %}
+    {% if not inventory_error %}
+      <div class="alert alert-warning">No Windows printers were found. Verify the printer installation and pywin32 setup on the print PC.</div>
+    {% endif %}
+  {% endfor %}
+</div>
+{% endblock %}
