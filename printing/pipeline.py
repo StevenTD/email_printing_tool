@@ -15,6 +15,7 @@ from mails.models import EmailAttachment, ReceivedEmail
 from .conversion import ConversionError, convert_attachment_to_pdf, render_email_to_pdf
 from .locks import printer_mutex
 from .models import PrintJob, PrintLog, PrinterProfile
+from .printers import PrinterManagementError, wait_for_printer_queue_empty
 
 
 class PrintPipelineError(Exception):
@@ -216,6 +217,8 @@ def _print_job_files(job, email, configuration, printer_name, dry_run):
             output_directory.mkdir(parents=True, exist_ok=True)
         for index, (filename, pdf_path) in enumerate(outputs, start=1):
             try:
+                if not dry_run and index > 1:
+                    wait_for_printer_queue_empty(printer_name)
                 if dry_run:
                     target_stem = Path(_safe_filename(filename)).stem
                     target = output_directory / f"{index:02d}-{target_stem}.pdf"
@@ -233,7 +236,12 @@ def _print_job_files(job, email, configuration, printer_name, dry_run):
                     result = PrintLog.Result.SUCCESS
                     details = f"SumatraPDF accepted the print request ({job.copies} copies)."
                 _record_file_result(job, email, filename, printer_name, result, details)
-            except (OSError, subprocess.SubprocessError, PrintPipelineError) as exc:
+            except (
+                OSError,
+                subprocess.SubprocessError,
+                PrintPipelineError,
+                PrinterManagementError,
+            ) as exc:
                 _record_file_result(
                     job,
                     email,
@@ -304,6 +312,7 @@ def _send_pdf_to_printer(
             print_settings.append("monochrome")
         elif profile.color_mode == PrinterProfile.ColorMode.COLOR:
             print_settings.append("color")
+    print_settings.append("fit")
     if print_settings:
         command.extend(["-print-settings", ",".join(print_settings)])
     command.append(str(pdf_path))

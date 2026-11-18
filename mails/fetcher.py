@@ -87,11 +87,17 @@ def _message_datetime(message):
     return value
 
 
-def _message_recipients(message):
-    headers = []
-    for header in ("To", "Cc", "Bcc"):
-        headers.extend(message.get_all(header, []))
+def _message_header_recipients(message, header):
+    headers = message.get_all(header, [])
     return [address for _, address in getaddresses(headers) if address]
+
+
+def _message_recipients(message):
+    return [
+        address
+        for header in ("To", "Cc", "Bcc")
+        for address in _message_header_recipients(message, header)
+    ]
 
 
 def _extract_message_content(message):
@@ -154,6 +160,9 @@ def store_message(raw_message, *, folder, uid, uidvalidity, max_attachment_bytes
         imap_uid=uid,
         sender=str(message.get("From", "")),
         recipients=_message_recipients(message),
+        to_recipients=_message_header_recipients(message, "To"),
+        cc_recipients=_message_header_recipients(message, "Cc"),
+        bcc_recipients=_message_header_recipients(message, "Bcc"),
         subject=str(message.get("Subject", "")),
         date_received=_message_datetime(message),
         body_text=body_text,

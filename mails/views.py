@@ -98,6 +98,10 @@ def email_detail(request, email_id):
         {
             "email": email,
             "safe_body_html": sanitize_email_html(email.body_html),
+            "has_printable_attachments": any(
+                attachment.printable and attachment.file
+                for attachment in email.attachments.all()
+            ),
         },
     )
 
@@ -242,6 +246,21 @@ def _apply_email_action(request, email, action):
             return str(exc)
         return None
 
+    if action == "print_attachments":
+        if not email.attachments.filter(printable=True).exclude(file="").exists():
+            return "This email has no saved printable attachments."
+        try:
+            create_print_job(
+                email,
+                requested_by=request.user,
+                print_email_body=False,
+                print_attachments=True,
+                explicit_reprint=True,
+            )
+        except PrintPipelineError as exc:
+            return str(exc)
+        return None
+
     if action == "mark_printed":
         _cancel_pending_jobs(email)
         email.status = ReceivedEmail.Status.PRINTED
@@ -289,7 +308,11 @@ def _apply_email_action(request, email, action):
 @require_POST
 def email_action(request, email_id, action):
     require_mailprint_operator(request.user)
-    if not is_mailprint_admin(request.user) and action not in ("print", "reprint"):
+    if not is_mailprint_admin(request.user) and action not in (
+        "print",
+        "reprint",
+        "print_attachments",
+    ):
         raise PermissionDenied
     email = get_object_or_404(ReceivedEmail, pk=email_id)
     if action == "delete":

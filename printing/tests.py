@@ -8,16 +8,18 @@ from django.contrib.auth import get_user_model
 from django.core.files.base import ContentFile
 from django.test import TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 
 from core.models import AppConfiguration, AuditLog
 from mails.models import EmailAttachment, ReceivedEmail
 
-from .conversion import build_email_html
+from .conversion import build_email_footer_html, build_email_html
 from .forms import PrinterProfileForm
 from .models import PrintJob, PrintLog, PrinterProfile
 from .pipeline import (
     PrintPipelineError,
     _send_pdf_to_printer,
+    _print_job_files,
     create_print_job,
     process_next_job,
 )
@@ -26,6 +28,7 @@ from .printers import (
     cancel_printer_job,
     list_installed_printers,
     list_printer_jobs,
+    wait_for_printer_queue_empty,
 )
 
 
@@ -321,6 +324,90 @@ class PrintPipelineTests(TestCase):
                     2,
                 )
 
+    def test_waits_for_each_print_to_leave_queue_before_sending_next_file(self):
+        email = self.create_email()
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                attachment = EmailAttachment.objects.create(
+                    email=email,
+                    filename="report.pdf",
+                    content_type="application/pdf",
+                    printable=True,
+                )
+                attachment.file.save(
+                    "report.pdf",
+                    ContentFile(b"%PDF-1.7 attachment"),
+                    save=True,
+                )
+                job = PrintJob.objects.create(
+                    email=email,
+                    print_email_body=True,
+                    print_attachments=True,
+                )
+                events = []
+                with patch(
+                    "printing.pipeline.render_email_to_pdf",
+                    return_value=b"%PDF-1.7 body",
+                ), patch(
+                    "printing.pipeline._send_pdf_to_printer",
+                    side_effect=lambda path, *args, **kwargs: events.append(
+                        ("send", Path(path).name)
+                    ),
+                ), patch(
+                    "printing.pipeline.wait_for_printer_queue_empty",
+                    side_effect=lambda printer: events.append(("wait", printer)),
+                ):
+                    completed = _print_job_files(
+                        job,
+                        email,
+                        AppConfiguration(key=1),
+                        "Test printer",
+                        False,
+                    )
+
+        self.assertEqual(completed, 2)
+        self.assertEqual(
+            [event[0] for event in events],
+            ["send", "wait", "send"],
+        )
+        self.assertEqual(events[1], ("wait", "Test printer"))
+
+    def test_wait_for_printer_queue_checks_until_jobs_are_gone(self):
+        class FakeWin32Print:
+            calls = 0
+
+            @staticmethod
+            def OpenPrinter(printer_name):
+                return printer_name
+
+            @classmethod
+            def GetPrinter(cls, handle, level):
+                cls.calls += 1
+                return {"cJobs": 1 if cls.calls == 1 else 0}
+
+            @staticmethod
+            def EnumJobs(handle, first, count, level):
+                return [{"Status": 0, "pStatus": "Printing"}]
+
+            @staticmethod
+            def ClosePrinter(handle):
+                return None
+
+        class FakePyWinTypes:
+            error = FakeWin32Error
+
+        with patch(
+            "printing.printers._win32_modules",
+            return_value=(FakeWin32Print, FakePyWinTypes),
+        ), patch("printing.printers.time.sleep"):
+            wait_for_printer_queue_empty(
+                "Test printer",
+                timeout_seconds=5,
+                poll_interval_seconds=0.01,
+            )
+
+        self.assertEqual(FakeWin32Print.calls, 2)
+
     def test_successful_print_log_blocks_a_non_explicit_reprint(self):
         email = self.create_email()
         first_job = PrintJob.objects.create(
@@ -452,13 +539,56 @@ class PrintPipelineTests(TestCase):
         settings_index = command.index("-print-settings") + 1
         self.assertEqual(
             command[settings_index],
-            "3x,paper=Letter,duplex,monochrome",
+            "3x,paper=Letter,duplex,monochrome,fit",
         )
         self.assertEqual(command[-1], str(pdf_path))
         self.assertFalse(run.call_args.kwargs.get("shell", False))
 
 
 class EmailHtmlConversionTests(TestCase):
+    def test_print_layout_includes_email_metadata_and_tool_footer(self):
+        email = ReceivedEmail.objects.create(
+            message_id="<print-layout@example.test>",
+            imap_folder="INBOX",
+            imap_uidvalidity=987,
+            imap_uid=902,
+            sender="Sender <sender@example.test>",
+            recipients=["to@example.test", "cc@example.test", "bcc@example.test"],
+            to_recipients=["to@example.test"],
+            cc_recipients=["cc@example.test"],
+            bcc_recipients=["bcc@example.test"],
+            subject="Quarterly report",
+            body_text="Report body",
+            date_received=timezone.now(),
+        )
+        EmailAttachment.objects.create(
+            email=email,
+            filename="report.pdf",
+            content_type="application/pdf",
+            size_bytes=1234,
+            printable=True,
+        )
+
+        html = build_email_html(email)
+
+        self.assertIn("MAILPRINT", html)
+        self.assertIn("Quarterly report", html)
+        self.assertIn("Email date", html)
+        self.assertIn("Received by MailPrint", html)
+        self.assertIn("sender@example.test", html)
+        self.assertIn("to@example.test", html)
+        self.assertIn("cc@example.test", html)
+        self.assertIn("bcc@example.test", html)
+        self.assertIn("report.pdf (1,234 bytes; printable)", html)
+        self.assertIn("Print copy generated:", html)
+        self.assertIn("Report body", html)
+
+        footer = build_email_footer_html(email)
+        self.assertIn("Source email: Sender &lt;sender@example.test&gt;", footer)
+        self.assertIn("printed using MailPrint Email Monitoring Tool", footer)
+        self.assertIn('class="pageNumber"', footer)
+        self.assertIn('class="totalPages"', footer)
+
     def test_html_is_sanitized_before_rendering(self):
         email = ReceivedEmail(
             imap_uid=1,

@@ -26,11 +26,17 @@ from printing.models import PrintJob, PrintLog
 def make_raw_message(
     message_id="<received-001@example.test>",
     attachment_filename="report.pdf",
+    cc=None,
+    bcc=None,
 ):
     message = EmailMessage()
     message["Message-ID"] = message_id
     message["From"] = "Sender <sender@example.test>"
     message["To"] = "recipient@example.test"
+    if cc:
+        message["Cc"] = cc
+    if bcc:
+        message["Bcc"] = bcc
     message["Subject"] = "A test message"
     message["Date"] = "Wed, 12 Mar 2025 09:00:00 +0000"
     message.set_content("The email body.")
@@ -125,6 +131,29 @@ class MailStorageTests(TestCase):
         self.assertLessEqual(
             len(attachment.file.name),
             EmailAttachment._meta.get_field("file").max_length,
+        )
+
+    def test_stores_to_cc_and_bcc_separately(self):
+        raw_message = make_raw_message(
+            cc="Copy Recipient <cc@example.test>",
+            bcc="Hidden Recipient <bcc@example.test>",
+        )
+
+        email, created = store_message(
+            raw_message,
+            folder="INBOX",
+            uid=80,
+            uidvalidity=987,
+            max_attachment_bytes=1024,
+        )
+
+        self.assertTrue(created)
+        self.assertEqual(email.to_recipients, ["recipient@example.test"])
+        self.assertEqual(email.cc_recipients, ["cc@example.test"])
+        self.assertEqual(email.bcc_recipients, ["bcc@example.test"])
+        self.assertEqual(
+            email.recipients,
+            ["recipient@example.test", "cc@example.test", "bcc@example.test"],
         )
 
     def test_oversized_attachment_is_listed_without_saving_its_content(self):
@@ -267,6 +296,41 @@ class MailInboxViewTests(TestCase):
             PrintJob.Status.QUEUED,
         )
         self.assertTrue(AuditLog.objects.filter(action="email_print").exists())
+
+    def test_operator_can_queue_printable_attachments_without_email_body(self):
+        self.email.status = ReceivedEmail.Status.PRINTED
+        self.email.save(update_fields=["status"])
+        attachment = EmailAttachment.objects.create(
+            email=self.email,
+            filename="sample.pdf",
+            content_type="application/pdf",
+            printable=True,
+            file="mail/sample.pdf",
+        )
+
+        detail = self.client.get(reverse("mails:detail", args=[self.email.pk]))
+        response = self.client.post(
+            reverse("mails:action", args=[self.email.pk, "print_attachments"])
+        )
+
+        job = PrintJob.objects.get(email=self.email)
+        self.assertEqual(detail.status_code, 200)
+        self.assertContains(detail, "Print attachments only")
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(job.print_email_body)
+        self.assertTrue(job.print_attachments)
+        self.assertTrue(job.explicit_reprint)
+        self.assertFalse(job.automatic)
+        self.assertTrue(AuditLog.objects.filter(action="email_print_attachments").exists())
+        self.assertEqual(attachment.email_id, self.email.pk)
+
+    def test_print_attachments_action_rejects_emails_without_printable_files(self):
+        response = self.client.post(
+            reverse("mails:action", args=[self.email.pk, "print_attachments"])
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(PrintJob.objects.exists())
 
     def test_mark_printed_records_manual_history_without_printing(self):
         admin = get_user_model().objects.create_user(

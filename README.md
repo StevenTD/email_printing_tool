@@ -102,12 +102,14 @@ MIME type or extension can be combined. Each rule selects Print, Ignore, or Hold
 and can set the printer, copies, and whether to include the body and attachments.
 The default action for unmatched messages is configurable on the Rules page.
 
-The header's **Auto-print ON/OFF** switch is the master safety control. When OFF,
-print actions for new mail are held, and already-queued automatic jobs are
-cancelled; it cannot be overridden by an individual rule. When ON, print rules
-queue automatically. The optional weekly schedule uses `DJANGO_TIME_ZONE` from
-`.env` (UTC by default). A rule may disable auto-print or bypass the schedule,
-but never bypass the master OFF switch.
+The header's **Auto-print ON/OFF** switch controls automatic printing. When OFF,
+messages are normally held and already-queued automatic jobs are cancelled.
+Exception: a matching **Print** rule with **Print attachments** enabled queues
+an email if it has at least one printable attachment, even while the global
+switch is OFF. The rule's attachment setting, explicit Hold/Ignore rules, and
+the optional weekly schedule still apply. The schedule uses
+`DJANGO_TIME_ZONE` from `.env` (UTC by default). A rule may disable automatic
+printing or bypass the schedule.
 
 ## Acknowledgements (Stage 6)
 
@@ -132,10 +134,13 @@ and do not send real email.
 MailPrint Admin users can open `http://127.0.0.1:8000/printers/` to refresh Windows
 printer status, inspect each device's Windows queue, and cancel a queued Windows
 job. Create a profile to set its friendly alias, dedicated purpose, MailPrint
-default status, paper size, duplex, and color/monochrome mode. Profiles appear
-as named choices in filtering-rule printer settings. The SumatraPDF executable
-can be configured on this page; otherwise MailPrint uses `SUMATRA_PDF_PATH` or
-searches `PATH`.
+default status, paper size, duplex, and color/monochrome mode. MailPrint asks
+SumatraPDF to fit each printed PDF page, preserving its aspect ratio, to that
+profile's paper size; set the profile to `Letter` if that is the paper loaded in
+the printer. PDF attachments are sent directly to SumatraPDF without being
+re-rendered. Profiles appear as named choices in filtering-rule printer
+settings. The SumatraPDF executable can be configured on this page; otherwise
+MailPrint uses `SUMATRA_PDF_PATH` or searches `PATH`.
 
 The **Print test page** action physically prints when dry-run is disabled. With
 dry-run enabled, it saves the generated PDF under
@@ -146,6 +151,15 @@ physical test page was printed during development.
 
 - Email bodies are rendered with headless Playwright Chromium. Email HTML is
   sanitized, scripts are disabled, and external page requests are blocked.
+- The email-body PDF uses a consistent MailPrint print layout with the subject,
+  sender, email date, time received by MailPrint, recipients (To/Cc/Bcc),
+  message ID, mailbox, attachment list, and local print-generation time. A
+  page-margin footer identifies the source sender and MailPrint and includes
+  page numbers. Short messages fit on one page when their content allows;
+  longer messages continue across pages. The sanitized original HTML/text
+  remains in the body area; its structure is preserved within the shared
+  layout. Separate recipient fields are captured for newly fetched mail; older
+  records show their stored recipients together.
 - PDFs are printed using SumatraPDF's silent CLI. Install SumatraPDF and set
   `SUMATRA_PDF_PATH` in `.env` if it is not on `PATH`.
 - Images are converted with Pillow. Office files (`doc`, `docx`, `xls`, `xlsx`,
@@ -158,6 +172,11 @@ job writes its body and attachment PDFs to `dry_run_output` (or the path in
 `MAILPRINT_DRY_RUN_DIR`) and is not marked as physically printed. Create a
 `PrinterProfile` with the Windows printer name and mark it as the default for
 real printing. Queue a `PrintJob` in admin and run:
+
+For a multi-document job, MailPrint waits for the Windows printer queue to
+clear between the email body and each attachment. If a previous document is
+still queued after five minutes, remaining documents are marked failed instead
+of being submitted into a busy queue.
 
 ```powershell
 python manage.py run_worker --once

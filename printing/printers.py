@@ -1,3 +1,5 @@
+import time
+
 from django.db import transaction
 
 from .models import PrinterProfile
@@ -5,6 +7,54 @@ from .models import PrinterProfile
 
 class PrinterManagementError(Exception):
     pass
+
+
+def wait_for_printer_queue_empty(
+    printer_name,
+    *,
+    timeout_seconds=300,
+    poll_interval_seconds=1,
+):
+    win32print, pywintypes = _win32_modules()
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        handle = None
+        try:
+            handle = win32print.OpenPrinter(printer_name)
+            job_count = int(win32print.GetPrinter(handle, 2).get("cJobs") or 0)
+            jobs = win32print.EnumJobs(handle, 0, job_count, 2) if job_count else []
+        except pywintypes.error as exc:
+            raise PrinterManagementError(
+                f"Could not check the print queue for {printer_name!r}: {exc}"
+            ) from exc
+        finally:
+            if handle is not None:
+                try:
+                    win32print.ClosePrinter(handle)
+                except pywintypes.error as exc:
+                    raise PrinterManagementError(
+                        f"Could not close the printer queue for {printer_name!r}: {exc}"
+                    ) from exc
+
+        terminal_statuses = (
+            getattr(win32print, "JOB_STATUS_PRINTED", 0)
+            | getattr(win32print, "JOB_STATUS_DELETED", 0)
+        )
+        pending_jobs = [
+            job
+            for job in jobs
+            if not int(job.get("Status") or 0) & terminal_statuses
+            and "printed" not in str(job.get("pStatus") or "").casefold()
+            and "deleted" not in str(job.get("pStatus") or "").casefold()
+        ]
+        if not pending_jobs:
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise PrinterManagementError(
+                f"Timed out waiting for the print queue on {printer_name!r} to clear."
+            )
+        time.sleep(min(poll_interval_seconds, remaining))
 
 
 def _win32_modules():

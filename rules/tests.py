@@ -5,7 +5,7 @@ from django.contrib.auth.models import Group
 from django.test import TestCase
 from django.urls import reverse
 
-from core.models import AppConfiguration
+from core.models import AppConfiguration, WorkerLog
 from core.access import OPERATOR_GROUP_NAME
 from mails.models import EmailAttachment, ReceivedEmail
 from printing.models import PrintJob, PrinterProfile
@@ -261,6 +261,59 @@ class AutoPrintPolicyTests(TestCase):
         self.assertIsNone(result)
         self.assertEqual(email.status, ReceivedEmail.Status.HELD)
         self.assertFalse(PrintJob.objects.exists())
+
+    def test_global_off_allows_print_rule_with_printable_attachment(self):
+        AppConfiguration.objects.create(auto_print_enabled=False)
+        email = self.make_email(1206)
+        EmailAttachment.objects.create(
+            email=email,
+            filename="invoice.pdf",
+            content_type="application/pdf",
+            printable=True,
+        )
+        FilterRule.objects.create(
+            name="Print attachment orders",
+            action=FilterRule.Action.PRINT,
+            sender_match=FilterRule.SenderMatch.DOMAIN,
+            sender_value="example.test",
+            print_attachments=True,
+        )
+
+        job = process_incoming_email(email)
+
+        email.refresh_from_db()
+        self.assertEqual(email.status, ReceivedEmail.Status.QUEUED)
+        self.assertIsNotNone(job)
+        self.assertTrue(job.print_attachments)
+        self.assertTrue(
+            WorkerLog.objects.filter(
+                email=email,
+                message__contains="while global auto-print is off",
+            ).exists()
+        )
+
+    def test_global_off_does_not_bypass_rule_that_disables_attachments(self):
+        AppConfiguration.objects.create(auto_print_enabled=False)
+        email = self.make_email(1207)
+        EmailAttachment.objects.create(
+            email=email,
+            filename="invoice.pdf",
+            content_type="application/pdf",
+            printable=True,
+        )
+        FilterRule.objects.create(
+            name="Do not print attachments",
+            action=FilterRule.Action.PRINT,
+            sender_match=FilterRule.SenderMatch.DOMAIN,
+            sender_value="example.test",
+            print_attachments=False,
+        )
+
+        job = process_incoming_email(email)
+
+        email.refresh_from_db()
+        self.assertIsNone(job)
+        self.assertEqual(email.status, ReceivedEmail.Status.HELD)
 
     def test_global_on_queues_matching_rule_with_its_print_options(self):
         AppConfiguration.objects.create(auto_print_enabled=True)

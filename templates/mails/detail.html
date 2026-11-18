@@ -14,6 +14,12 @@
       <a class="btn btn-outline-primary" href="{% url 'mails:acknowledgement' email.pk %}">
         Send acknowledgement
       </a>
+      {% if has_printable_attachments %}
+        <form method="post" action="{% url 'mails:action' email.pk 'print_attachments' %}">
+          {% csrf_token %}
+          <button class="btn btn-outline-primary" type="submit">Print attachments only</button>
+        </form>
+      {% endif %}
       {% if email.status == "printed" %}
         <form method="post" action="{% url 'mails:action' email.pk 'reprint' %}">
           {% csrf_token %}

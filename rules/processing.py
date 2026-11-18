@@ -33,7 +33,13 @@ def process_incoming_email(email, *, now=None):
         _log(email, WorkerLog.Level.INFO, "Email held for review.")
         return None
 
-    if not configuration.auto_print_enabled:
+    printable_attachment_rule = bool(
+        rule
+        and action == FilterRule.Action.PRINT
+        and rule.print_attachments
+        and email.attachments.filter(printable=True).exists()
+    )
+    if not configuration.auto_print_enabled and not printable_attachment_rule:
         _set_status(email, ReceivedEmail.Status.HELD)
         _log(email, WorkerLog.Level.INFO, "Auto-print is off; email held for review.")
         return None
@@ -56,7 +62,12 @@ def process_incoming_email(email, *, now=None):
         print_attachments=rule.print_attachments if rule else True,
         automatic=True,
     )
-    _log(email, WorkerLog.Level.INFO, f"Queued automatically as print job {job.pk}.")
+    queue_reason = (
+        "Queued by a Print rule with printable attachments while global auto-print is off."
+        if printable_attachment_rule and not configuration.auto_print_enabled
+        else f"Queued automatically as print job {job.pk}."
+    )
+    _log(email, WorkerLog.Level.INFO, queue_reason)
     return job
 
 

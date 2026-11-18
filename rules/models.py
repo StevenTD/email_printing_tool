@@ -43,8 +43,8 @@ class FilterRule(models.Model):
         null=True,
         blank=True,
         help_text=(
-            "When enabled, True may bypass the schedule (but never the global OFF switch); "
-            "False disables automatic printing for this rule."
+            "When enabled, True may bypass the schedule. A matching Print rule with "
+            "printable attachments may queue while global auto-print is OFF."
         ),
     )
     target_printer = models.CharField(max_length=255, blank=True)
