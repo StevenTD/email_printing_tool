@@ -33,7 +33,7 @@ def _configured_fetch_since_date():
 
 
 class Command(BaseCommand):
-    help = "Poll Gmail for unseen messages and store them locally."
+    help = "Poll Gmail for messages and store them locally."
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -44,6 +44,11 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         fetch_since_date = _configured_fetch_since_date()
+        fetch_seen_emails = config(
+            "MAILPRINT_FETCH_SEEN_EMAILS",
+            default=False,
+            cast=bool,
+        )
         configuration, _ = AppConfiguration.objects.get_or_create(key=1)
         if not configuration.imap_email or not configuration.imap_app_password_encrypted:
             raise CommandError("Run 'python manage.py configure_mail' before starting the worker.")
@@ -74,8 +79,9 @@ class Command(BaseCommand):
                             cast=int,
                         ),
                         fetch_since_date=fetch_since_date,
+                        fetch_seen_emails=fetch_seen_emails,
                     )
-                    summary = fetcher.fetch_unseen()
+                    summary = fetcher.fetch_messages()
                 except Exception as exc:
                     message = f"Gmail poll failed: {exc}"
                     poll_error = message

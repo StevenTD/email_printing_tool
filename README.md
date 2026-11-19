@@ -89,11 +89,12 @@ used for downloads. The worker stores
 message metadata and bodies in SQLite, and marks successfully stored messages
 as read. Duplicate Message-IDs and IMAP UIDs are constrained in the database.
 Set `MAILPRINT_FETCH_SINCE_DATE` in `.env` to an inclusive date in `YYYY-MM-DD`
-format (for example, `2025-01-01`) to fetch only unseen messages whose Gmail
-mailbox date is on or after that cutoff. This filter is applied in Gmail's IMAP
-search, so older messages are not downloaded or marked as read. Leave it blank
-to keep fetching all unseen messages. Restart the worker after changing the
-value.
+format (for example, `2025-01-01`) to fetch messages whose Gmail mailbox date is
+on or after that cutoff. This filter is applied in Gmail's IMAP search, so older
+messages are not downloaded. By default, only unread messages are fetched; set
+`MAILPRINT_FETCH_SEEN_EMAILS=True` to include read messages too. Existing
+messages already stored by MailPrint are deduplicated. Restart the worker after
+changing either setting.
 Worker errors are available in Django admin under **Worker logs**. Attachment
 downloads are capped at 25 MiB by default; oversized files remain listed but
 their content is not saved. Set `MAILPRINT_MAX_EMAIL_BYTES` and

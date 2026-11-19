@@ -222,7 +222,7 @@ class MailFetcherTests(TestCase):
                 summary = MailFetcher(
                     configuration,
                     connection_factory=lambda *args, **kwargs: fake_imap,
-                ).fetch_unseen()
+                ).fetch_messages()
 
         self.assertEqual(summary.stored, 1)
         self.assertEqual(summary.errors, 0)
@@ -270,11 +270,57 @@ class MailFetcherTests(TestCase):
                 configuration,
                 connection_factory=lambda *args, **kwargs: fake_imap,
                 fetch_since_date=date(2025, 3, 12),
-            ).fetch_unseen()
+            ).fetch_messages()
 
         self.assertEqual(summary.discovered, 0)
         self.assertIn(
             ("SEARCH", None, "UNSEEN", "SINCE", "12-Mar-2025"),
+            fake_imap.calls,
+        )
+
+    def test_searches_seen_and_unseen_since_configured_date_when_enabled(self):
+        class FakeIMAP:
+            def __init__(self):
+                self.calls = []
+
+            def login(self, username, password):
+                return "OK", [b"logged in"]
+
+            def select(self, folder):
+                return "OK", [b"0"]
+
+            def response(self, name):
+                return name, [b"987"]
+
+            def uid(self, command, *args):
+                self.calls.append((command, *args))
+                if command == "SEARCH":
+                    return "OK", [b""]
+                raise AssertionError(f"Unexpected IMAP command: {command}")
+
+            def logout(self):
+                return "BYE", [b"logged out"]
+
+        fake_imap = FakeIMAP()
+        configuration = AppConfiguration(
+            imap_email="mailbox@example.test",
+            imap_folder="INBOX",
+        )
+        with patch.object(
+            AppConfiguration,
+            "get_imap_app_password",
+            return_value="app-password",
+        ):
+            summary = MailFetcher(
+                configuration,
+                connection_factory=lambda *args, **kwargs: fake_imap,
+                fetch_since_date=date(2025, 3, 12),
+                fetch_seen_emails=True,
+            ).fetch_messages()
+
+        self.assertEqual(summary.discovered, 0)
+        self.assertIn(
+            ("SEARCH", None, "ALL", "SINCE", "12-Mar-2025"),
             fake_imap.calls,
         )
 
