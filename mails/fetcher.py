@@ -48,6 +48,20 @@ PRINTABLE_EXTENSIONS = {
     ".ods",
     ".rtf",
 }
+IMAP_MONTH_NAMES = (
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+)
 
 
 @dataclass
@@ -254,11 +268,13 @@ class MailFetcher:
         connection_factory=None,
         max_email_bytes=25 * 1024 * 1024,
         max_attachment_bytes=25 * 1024 * 1024,
+        fetch_since_date=None,
     ):
         self.configuration = configuration
         self.connection_factory = connection_factory or imaplib.IMAP4_SSL
         self.max_email_bytes = max_email_bytes
         self.max_attachment_bytes = max_attachment_bytes
+        self.fetch_since_date = fetch_since_date
 
     def fetch_unseen(self):
         connection = self.connection_factory("imap.gmail.com", 993, timeout=30)
@@ -272,7 +288,13 @@ class MailFetcher:
             self._require_ok(connection.select(_quote_mailbox(folder)), f"Select folder {folder!r}")
             uidvalidity = _uid_validity(connection)
 
-            status, data = connection.uid("SEARCH", None, "UNSEEN")
+            search_criteria = ["UNSEEN"]
+            if self.fetch_since_date is not None:
+                date = self.fetch_since_date
+                month_name = IMAP_MONTH_NAMES[date.month - 1]
+                imap_date = f"{date.day:02d}-{month_name}-{date.year:04d}"
+                search_criteria.extend(["SINCE", imap_date])
+            status, data = connection.uid("SEARCH", None, *search_criteria)
             self._require_ok((status, data), "Search for unseen messages")
             message_uids = data[0].split() if data and data[0] else []
             summary.discovered = len(message_uids)

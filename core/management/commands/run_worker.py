@@ -1,6 +1,7 @@
 import logging
 import os
 import time
+from datetime import date
 
 from decouple import config
 from django.core.management.base import BaseCommand, CommandError
@@ -14,6 +15,23 @@ from printing.pipeline import process_next_job
 logger = logging.getLogger("mailprint.worker")
 
 
+def _configured_fetch_since_date():
+    value = config("MAILPRINT_FETCH_SINCE_DATE", default="").strip()
+    if not value:
+        return None
+    try:
+        since_date = date.fromisoformat(value)
+    except ValueError as exc:
+        raise CommandError(
+            "MAILPRINT_FETCH_SINCE_DATE must be blank or an ISO date in YYYY-MM-DD format."
+        ) from exc
+    if since_date.isoformat() != value:
+        raise CommandError(
+            "MAILPRINT_FETCH_SINCE_DATE must be blank or an ISO date in YYYY-MM-DD format."
+        )
+    return since_date
+
+
 class Command(BaseCommand):
     help = "Poll Gmail for unseen messages and store them locally."
 
@@ -25,6 +43,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        fetch_since_date = _configured_fetch_since_date()
         configuration, _ = AppConfiguration.objects.get_or_create(key=1)
         if not configuration.imap_email or not configuration.imap_app_password_encrypted:
             raise CommandError("Run 'python manage.py configure_mail' before starting the worker.")
@@ -54,6 +73,7 @@ class Command(BaseCommand):
                             default=25 * 1024 * 1024,
                             cast=int,
                         ),
+                        fetch_since_date=fetch_since_date,
                     )
                     summary = fetcher.fetch_unseen()
                 except Exception as exc:

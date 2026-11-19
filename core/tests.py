@@ -1,12 +1,16 @@
+from datetime import date
+
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from unittest.mock import patch
 
 from cryptography.fernet import Fernet
 from django.test import Client, SimpleTestCase, TestCase
 
 from core.access import ADMIN_GROUP_NAME, OPERATOR_GROUP_NAME
+from core.management.commands.run_worker import _configured_fetch_since_date
 from core.models import AuditLog
 from mails.models import ReceivedEmail
 from .models import AppConfiguration
@@ -24,6 +28,21 @@ class EncryptedCredentialTests(SimpleTestCase):
 
             self.assertNotEqual(encrypted_value, "gmail-app-password")
             self.assertEqual(configuration.get_imap_app_password(), "gmail-app-password")
+
+
+class FetchSinceConfigurationTests(SimpleTestCase):
+    @patch("core.management.commands.run_worker.config", return_value="2025-03-12")
+    def test_parses_configured_cutoff_date(self, _config):
+        self.assertEqual(_configured_fetch_since_date(), date(2025, 3, 12))
+
+    @patch("core.management.commands.run_worker.config", return_value="")
+    def test_blank_cutoff_date_disables_date_filter(self, _config):
+        self.assertIsNone(_configured_fetch_since_date())
+
+    @patch("core.management.commands.run_worker.config", return_value="03/12/2025")
+    def test_rejects_non_iso_cutoff_date(self, _config):
+        with self.assertRaises(CommandError):
+            _configured_fetch_since_date()
 
 
 class DashboardViewTests(TestCase):

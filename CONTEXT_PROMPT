@@ -1,0 +1,100 @@
+Build a full-stack Django app called "MailPrint" that automatically prints incoming Gmail emails and their printable attachments, with a web GUI to monitor and control everything. It runs locally on a Windows PC (the one connected to the printers), and the GUI must also be accessible remotely.
+
+## Tech stack
+
+- Python 3.11+, Django 5, SQLite (keep it simple; settings so Postgres can be swapped in later)
+- Frontend: Django templates + Bootstrap 5 + HTMX (no heavy SPA). Responsive, works on phone.
+- Background worker: a separate long-running process (management command `run_worker`) using APScheduler or a simple loop. Do NOT use Celery/Redis.
+- Windows printing: `pywin32` (win32print) to list printers, and SumatraPDF CLI for silent printing:
+  `SumatraPDF.exe -print-to "<printer name>" -silent <file.pdf>`
+- Email -> PDF: use a headless approach (Playwright Chromium or wkhtmltopdf; pick one and document it). Office files (doc/docx/xls/xlsx) -> PDF via LibreOffice headless if installed; images -> PDF via Pillow/img2pdf.
+- Config via `.env` (python-decouple or django-environ). Never hardcode credentials.
+
+## Core features
+
+### 1. Mail fetching (worker)
+
+- Connect to Gmail over IMAP (imap.gmail.com, SSL) using an App Password.
+- Poll every N seconds (default 60, configurable in the GUI).
+- Only process UNSEEN messages in a configurable folder/label, and avoid duplicates using Message-ID + IMAP UID stored in the DB.
+- Save raw .eml, the email body rendered to PDF, and all attachments to a `media/mail/<yyyy>/<mm>/<message-id>/` folder.
+- Store in DB: sender, recipients, subject, date received, body text/html, attachment list (name, type, size, printable yes/no), and status.
+- Handle errors gracefully (IMAP disconnects, bad attachments, huge files) with retries and an error log visible in the GUI.
+
+### 2. Filtering rules (managed in the GUI)
+
+- Rules by sender (exact/domain), subject keyword (contains/regex), and attachment type.
+- Each rule has: action (Print / Ignore / Hold for review), target printer, copies, whether to print the email body, whether to print attachments, and priority order.
+- Default behavior when no rule matches is configurable (Hold for review is the default).
+
+### 3. Print pipeline
+
+- Statuses: NEW -> QUEUED -> PRINTING -> PRINTED, plus HELD, FAILED, SKIPPED, and ACKNOWLEDGED as a separate flag.
+- A print queue processed one job at a time per printer so jobs don't collide.
+- Print the email body PDF first, then each printable attachment (PDF, images, docx/xlsx via conversion). Non-printable attachments are listed but skipped.
+- Prevent double printing: a job is never printed twice unless the user explicitly clicks "Reprint". Log every print with timestamp, printer, user, and result.
+- Manual controls per email: Print now, Reprint, Mark as Printed (without printing), Mark as Printing / Reset status, Skip/Ignore, and Delete.
+
+### 4. AUTO-PRINT TOGGLE
+
+- A single global toggle in the GUI header: "Auto-print ON/OFF".
+- ON: emails matching a Print rule are queued and printed with no confirmation.
+- OFF: emails are fetched and stored as HELD for manual printing from the GUI.
+- Optional per-rule override and an optional schedule (for example, only auto-print 8:00-17:00 on weekdays).
+- The toggle state persists in the DB and is visible on every page.
+
+### 5. Acknowledgement reply shortcut
+
+- On each email: a one-click "Send acknowledgement" button.
+- Sends a reply via Gmail SMTP (same app password) in the same thread (set In-Reply-To and References headers).
+- Editable acknowledgement templates (for example "Received and printed", "Received, for processing") with variables like {sender_name}, {subject}, {date}, {office_name}. Include a template picker and a preview before sending.
+- Option: auto-send acknowledgement after a successful print (off by default, toggle in settings).
+- Mark the email as ACKNOWLEDGED with timestamp and show a badge in the list. Prevent duplicate acknowledgements unless confirmed.
+
+### 6. Printer management
+
+- Page that lists all installed Windows printers (via win32print) with status (ready/offline/error), default printer flag, and a refresh button.
+- Ability to define friendly aliases (for example "Front Desk Laser") and set a DEDICATED printer for specific purposes or rules (for example "Special Orders -> HP LaserJet 2").
+- Set a default printer for the app, plus per-rule printers.
+- "Print test page" button per printer.
+- Show the current print queue per printer and let the user cancel a stuck job.
+- Settings for the SumatraPDF path, paper size, duplex, and color/mono per printer profile.
+
+### 7. GUI pages
+
+- Dashboard: counts (new, held, printed today, failed), last fetch time, worker status (running/stopped), auto-print toggle, and recent activity.
+- Inbox: searchable, filterable table (status, sender, date, has attachment) with row actions (Print, Reprint, Acknowledge, Mark printed, Hold, Ignore). Bulk actions with checkboxes.
+- Email detail: rendered body preview, attachment list with previews/downloads, print history, acknowledgement history, and action buttons.
+- Rules page, Printers page, Templates page, Settings page (IMAP/SMTP credentials, poll interval, folders), and Logs/Audit page.
+- Live updates using HTMX polling (no page reloads for status changes).
+
+### 8. Users and security
+
+- Django auth with login required for everything. Roles: Admin (all settings) and Operator (print/acknowledge only).
+- Store Gmail credentials encrypted (Fernet key from `.env`), never in plaintext.
+- CSRF protection, secure session cookies, rate-limited login, and an audit log of who did what.
+
+### 9. Remote access
+
+- The app runs locally on the print PC with Waitress (production server) bound to 0.0.0.0:8000.
+- Document and prefer a safe way to access the GUI from anywhere WITHOUT exposing the PC directly to the internet: Tailscale (preferred) or Cloudflare Tunnel with Cloudflare Access. Include setup steps for one of them.
+- Configure ALLOWED_HOSTS and CSRF_TRUSTED_ORIGINS from `.env`.
+
+### 10. Running as a background service
+
+- Provide scripts/instructions to run the web server and the worker automatically on Windows startup (NSSM or Task Scheduler), restart on failure, and log to files with rotation.
+
+## Deliverables
+
+1. Full project structure with apps such as `mails`, `printing`, `rules`, `core`.
+2. Models, migrations, views, templates, and the worker command.
+3. `requirements.txt`, `.env.example`, and a README with step-by-step Windows setup (Python, SumatraPDF, Playwright/wkhtmltopdf, LibreOffice optional, Gmail App Password, Tailscale).
+4. A seed command that creates the default admin, a sample rule, and sample templates.
+5. Unit tests for: duplicate prevention, rule matching, the auto-print toggle, and acknowledgement threading.
+6. A "dry run" mode that fetches and processes emails but writes PDFs to a folder instead of sending to the printer, for testing without wasting paper.
+
+## Build instructions
+
+- Work in stages: (1) project scaffold + models, (2) IMAP fetcher + storage, (3) PDF conversion + print pipeline, (4) GUI pages, (5) rules + auto-print toggle, (6) acknowledgement, (7) printer management, (8) auth + remote access + service setup.
+- After each stage, give me the run/test commands and wait for confirmation before continuing.
+- Prefer clear, commented, maintainable code over clever code. Keep changes targeted and avoid unnecessary dependencies.

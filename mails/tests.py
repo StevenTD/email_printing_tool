@@ -1,4 +1,5 @@
 import tempfile
+from datetime import date
 from email.message import EmailMessage
 from unittest.mock import patch
 
@@ -231,6 +232,51 @@ class MailFetcherTests(TestCase):
         stored_email = ReceivedEmail.objects.get()
         self.assertEqual(stored_email.status, ReceivedEmail.Status.HELD)
         self.assertEqual(ReceivedEmail.objects.count(), 1)
+
+    def test_searches_unseen_messages_since_configured_date(self):
+        class FakeIMAP:
+            def __init__(self):
+                self.calls = []
+
+            def login(self, username, password):
+                return "OK", [b"logged in"]
+
+            def select(self, folder):
+                return "OK", [b"0"]
+
+            def response(self, name):
+                return name, [b"987"]
+
+            def uid(self, command, *args):
+                self.calls.append((command, *args))
+                if command == "SEARCH":
+                    return "OK", [b""]
+                raise AssertionError(f"Unexpected IMAP command: {command}")
+
+            def logout(self):
+                return "BYE", [b"logged out"]
+
+        fake_imap = FakeIMAP()
+        configuration = AppConfiguration(
+            imap_email="mailbox@example.test",
+            imap_folder="INBOX",
+        )
+        with patch.object(
+            AppConfiguration,
+            "get_imap_app_password",
+            return_value="app-password",
+        ):
+            summary = MailFetcher(
+                configuration,
+                connection_factory=lambda *args, **kwargs: fake_imap,
+                fetch_since_date=date(2025, 3, 12),
+            ).fetch_unseen()
+
+        self.assertEqual(summary.discovered, 0)
+        self.assertIn(
+            ("SEARCH", None, "UNSEEN", "SINCE", "12-Mar-2025"),
+            fake_imap.calls,
+        )
 
 
 class MailInboxViewTests(TestCase):
