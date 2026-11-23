@@ -103,7 +103,8 @@ The worker also checks Gmail's Sent folder (default `[Gmail]/Sent Mail`) for
 replies to stored emails. Change **IMAP sent folder** in the application
 configuration if your Gmail account uses a different folder name. `run_worker`
 prints and flushes progress while connecting, authenticating, and scanning each
-folder; long scans report progress every 100 messages.
+folder. It checks Sent-folder headers in batches of 50 and downloads full
+messages only for replies matching stored emails.
 
 ## Filtering rules and auto-print (Stage 5)
 

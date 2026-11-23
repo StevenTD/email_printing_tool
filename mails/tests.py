@@ -194,6 +194,11 @@ class MailFetcherTests(TestCase):
         reply["Date"] = "Wed, 12 Mar 2025 09:30:00 +0000"
         reply.set_content("I have received your email.")
         raw_reply = reply.as_bytes()
+        unrelated = EmailMessage()
+        unrelated["Message-ID"] = "<unrelated@example.test>"
+        unrelated["Subject"] = "Not a reply"
+        unrelated.set_content("This message should not be downloaded in full.")
+        raw_unrelated = unrelated.as_bytes()
 
         class FakeIMAP:
             def __init__(self):
@@ -216,9 +221,15 @@ class MailFetcherTests(TestCase):
                     return "OK", [b""]
                 if command == "SEARCH":
                     if args[1:] == ("ALL",):
-                        return "OK", [b"91"]
+                        return "OK", [b"90 91"]
                     return "OK", [b""]
                 if command == "FETCH":
+                    if "HEADER.FIELDS" in args[1]:
+                        return "OK", [
+                            (b"1 (UID 90 BODY[HEADER.FIELDS])", raw_unrelated),
+                            (b"2 (UID 91 BODY[HEADER.FIELDS])", raw_reply),
+                            b")",
+                        ]
                     return "OK", [(b"91 (BODY[])", raw_reply), b")"]
                 raise AssertionError(f"Unexpected IMAP command: {command}")
 
@@ -230,6 +241,7 @@ class MailFetcherTests(TestCase):
             imap_email="mailbox@example.test",
             imap_folder="INBOX",
         )
+        status_messages = []
         with patch.object(
             AppConfiguration,
             "get_imap_app_password",
@@ -238,6 +250,7 @@ class MailFetcherTests(TestCase):
             summary = MailFetcher(
                 configuration,
                 connection_factory=lambda *args, **kwargs: fake_imap,
+                status_callback=status_messages.append,
             ).fetch_messages()
             second_summary = MailFetcher(
                 configuration,
@@ -266,6 +279,23 @@ class MailFetcherTests(TestCase):
             ('"INBOX"', "SEARCH", None, "UNSEEN")
         )
         self.assertLess(sent_search_index, inbox_search_index)
+        header_fetches = [
+            call
+            for call in fake_imap.calls
+            if call[1] == "FETCH" and "HEADER.FIELDS" in call[3]
+        ]
+        body_fetches = [
+            call[2]
+            for call in fake_imap.calls
+            if call[1] == "FETCH" and call[3] == "(BODY.PEEK[])"
+        ]
+        self.assertEqual(len(header_fetches), 1)
+        self.assertEqual(header_fetches[0][2], "90,91")
+        self.assertEqual(body_fetches, ["91"])
+        self.assertIn(
+            "Fetching headers for Gmail Sent messages 1-2 of 2.",
+            status_messages,
+        )
         self.assertIn(
             ('"[Gmail]/Sent Mail"', "SEARCH", None, "UID", "92:*"),
             fake_imap.calls,
@@ -306,6 +336,7 @@ class MailFetcherTests(TestCase):
         configuration = AppConfiguration(
             imap_email="mailbox@example.test",
             imap_folder="INBOX",
+            imap_sent_folder="",
         )
         with tempfile.TemporaryDirectory() as media_root:
             with override_settings(MEDIA_ROOT=media_root), patch.object(

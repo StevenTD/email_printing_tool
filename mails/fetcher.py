@@ -64,6 +64,8 @@ IMAP_MONTH_NAMES = (
     "Dec",
 )
 MESSAGE_ID_PATTERN = re.compile(r"<[^<>\s]+>")
+IMAP_UID_PATTERN = re.compile(rb"\bUID\s+(\d+)\b", re.IGNORECASE)
+SENT_HEADER_BATCH_SIZE = 50
 
 
 @dataclass
@@ -415,27 +417,67 @@ class MailFetcher:
         latest_uid = last_uid
         reply_count = 0
         error_count = 0
-        for index, uid_bytes in enumerate(uids, start=1):
-            uid = int(uid_bytes)
-            latest_uid = max(latest_uid, uid)
-            if index == 1 or index % 100 == 0:
-                self._report_status(
-                    f"Checking Gmail Sent messages: {index} of {len(uids)}."
-                )
+        uids = sorted(uids, key=int)
+        stop_at_error = False
+        for batch_start in range(0, len(uids), SENT_HEADER_BATCH_SIZE):
+            batch = uids[batch_start : batch_start + SENT_HEADER_BATCH_SIZE]
+            batch_end = batch_start + len(batch)
+            self._report_status(
+                f"Fetching headers for Gmail Sent messages "
+                f"{batch_start + 1}-{batch_end} of {len(uids)}."
+            )
             try:
-                raw_message = self._fetch_raw_message(connection, uid)
-                if self._record_sent_reply(raw_message):
-                    reply_count += 1
+                headers_by_uid = self._fetch_sent_headers(connection, batch)
             except imaplib.IMAP4.abort:
                 raise
             except Exception as exc:
                 error_count += 1
                 _log(
                     WorkerLog.Level.ERROR,
-                    f"Gmail Sent UID {uid}: {exc}",
+                    f"Gmail Sent UIDs {batch_start + 1}-{batch_end}: {exc}",
                 )
+                self._report_status(
+                    f"Could not fetch Gmail Sent headers for messages "
+                    f"{batch_start + 1}-{batch_end}: {exc}"
+                )
+                break
 
-        if not error_count:
+            for index, uid_bytes in enumerate(batch, start=batch_start + 1):
+                uid = int(uid_bytes)
+                raw_headers = headers_by_uid.get(uid_bytes.decode("ascii"))
+                if raw_headers is None:
+                    error_count += 1
+                    _log(
+                        WorkerLog.Level.ERROR,
+                        f"Gmail Sent UID {uid}: Gmail returned no message headers.",
+                    )
+                    stop_at_error = True
+                    break
+                if index == 1 or index % 100 == 0:
+                    self._report_status(
+                        f"Checking Gmail Sent messages: {index} of {len(uids)}."
+                    )
+                try:
+                    if self._record_sent_reply(connection, uid, raw_headers):
+                        reply_count += 1
+                except imaplib.IMAP4.abort:
+                    raise
+                except Exception as exc:
+                    error_count += 1
+                    _log(
+                        WorkerLog.Level.ERROR,
+                        f"Gmail Sent UID {uid}: {exc}",
+                    )
+                    self._report_status(
+                        f"Could not check Gmail Sent UID {uid}: {exc}"
+                    )
+                    stop_at_error = True
+                    break
+                latest_uid = max(latest_uid, uid)
+            if stop_at_error:
+                break
+
+        if latest_uid > last_uid or not error_count:
             self.configuration.imap_sent_sync_folder = folder
             self.configuration.imap_sent_uidvalidity = uidvalidity
             self.configuration.imap_sent_last_uid = latest_uid
@@ -454,8 +496,27 @@ class MailFetcher:
         )
         return reply_count, error_count
 
-    def _record_sent_reply(self, raw_message):
-        message = message_from_bytes(raw_message, policy=default)
+    def _fetch_sent_headers(self, connection, uid_bytes_list):
+        uid_set = ",".join(uid.decode("ascii") for uid in uid_bytes_list)
+        result = connection.uid(
+            "FETCH",
+            uid_set,
+            "(UID BODY.PEEK[HEADER.FIELDS "
+            "(MESSAGE-ID IN-REPLY-TO REFERENCES TO SUBJECT DATE)])",
+        )
+        self._require_ok(result, f"Fetch Gmail Sent headers for UIDs {uid_set}")
+        headers_by_uid = {}
+        for item in result[1] or []:
+            if not isinstance(item, tuple) or len(item) < 2:
+                continue
+            match = IMAP_UID_PATTERN.search(item[0])
+            if match is None:
+                raise ValueError("Gmail Sent header response did not include a UID.")
+            headers_by_uid[match.group(1).decode("ascii")] = item[1]
+        return headers_by_uid
+
+    def _record_sent_reply(self, connection, uid, raw_headers):
+        message = message_from_bytes(raw_headers, policy=default)
         message_id = str(message.get("Message-ID", "")).strip()
         if not message_id:
             _log(
@@ -479,6 +540,12 @@ class MailFetcher:
         if email is None or email.acknowledgements.filter(message_id=message_id).exists():
             return False
 
+        self._report_status(
+            f"Matched Gmail Sent UID {uid} to stored email {email.pk}; "
+            "fetching reply body."
+        )
+        raw_message = self._fetch_raw_message(connection, uid)
+        message = message_from_bytes(raw_message, policy=default)
         body_text, body_html, _, _ = _extract_message_content(message)
         recipients = _message_header_recipients(message, "To")
         Acknowledgement.objects.create(
