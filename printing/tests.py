@@ -11,7 +11,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from core.models import AppConfiguration, AuditLog
-from mails.models import EmailAttachment, ReceivedEmail
+from mails.models import Acknowledgement, EmailAttachment, ReceivedEmail
 
 from .conversion import build_email_footer_html, build_email_html
 from .forms import PrinterProfileForm
@@ -342,13 +342,14 @@ class PrintPipelineTests(TestCase):
                 job = PrintJob.objects.create(
                     email=email,
                     print_email_body=True,
+                    print_replies=True,
                     print_attachments=True,
                 )
                 events = []
                 with patch(
                     "printing.pipeline.render_email_to_pdf",
                     return_value=b"%PDF-1.7 body",
-                ), patch(
+                ) as render_email, patch(
                     "printing.pipeline._send_pdf_to_printer",
                     side_effect=lambda path, *args, **kwargs: events.append(
                         ("send", Path(path).name)
@@ -366,6 +367,7 @@ class PrintPipelineTests(TestCase):
                     )
 
         self.assertEqual(completed, 2)
+        render_email.assert_called_once_with(email, include_replies=True)
         self.assertEqual(
             [event[0] for event in events],
             ["send", "wait", "send"],
@@ -582,12 +584,58 @@ class EmailHtmlConversionTests(TestCase):
         self.assertIn("report.pdf (1,234 bytes; printable)", html)
         self.assertIn("Print copy generated:", html)
         self.assertIn("Report body", html)
+        self.assertIn(
+            "@page { size: A4; margin: 10mm 12mm 16mm 12mm; }",
+            html,
+        )
+        self.assertIn("font-size: 10pt; color: #17212b;", html)
+        self.assertIn(
+            ".metadata { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));",
+            html,
+        )
+        self.assertIn("class=\"metadata-item metadata-item-wide\"", html)
 
         footer = build_email_footer_html(email)
         self.assertIn("Source email: Sender &lt;sender@example.test&gt;", footer)
         self.assertIn("printed using MailPrint Email Monitoring Tool", footer)
         self.assertIn('class="pageNumber"', footer)
         self.assertIn('class="totalPages"', footer)
+
+    def test_replies_are_included_only_when_requested_and_are_sanitized(self):
+        email = ReceivedEmail.objects.create(
+            imap_folder="INBOX",
+            imap_uidvalidity=987,
+            imap_uid=903,
+            subject="Quarterly report",
+            body_text="Original body",
+        )
+        Acknowledgement.objects.create(
+            email=email,
+            recipient="sender@example.test",
+            sender="mailbox@example.test",
+            subject="Re: Quarterly report",
+            body="Thanks for your message.",
+            body_html='<p onclick="bad()">Thanks for your message.</p><script>unsafe()</script>',
+            status=Acknowledgement.Status.SENT,
+        )
+        Acknowledgement.objects.create(
+            email=email,
+            recipient="sender@example.test",
+            body="Failed message should not print.",
+            status=Acknowledgement.Status.FAILED,
+        )
+
+        without_replies = build_email_html(email)
+        with_replies = build_email_html(email, include_replies=True)
+
+        self.assertNotIn("Thanks for your message.", without_replies)
+        self.assertIn("Replies (1)", with_replies)
+        self.assertIn("From:</strong> mailbox@example.test", with_replies)
+        self.assertIn("To:</strong> sender@example.test", with_replies)
+        self.assertIn("<p>Thanks for your message.</p>", with_replies)
+        self.assertNotIn("<script>", with_replies)
+        self.assertNotIn("onclick", with_replies)
+        self.assertNotIn("Failed message should not print.", with_replies)
 
     def test_html_is_sanitized_before_rendering(self):
         email = ReceivedEmail(

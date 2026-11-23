@@ -613,13 +613,31 @@ class MailInboxViewTests(TestCase):
         )
 
         self.email.refresh_from_db()
+        job = PrintJob.objects.get(email=self.email)
         self.assertEqual(response.status_code, 302)
         self.assertEqual(self.email.status, ReceivedEmail.Status.QUEUED)
-        self.assertEqual(
-            PrintJob.objects.get(email=self.email).status,
-            PrintJob.Status.QUEUED,
-        )
+        self.assertEqual(job.status, PrintJob.Status.QUEUED)
+        self.assertFalse(job.print_replies)
         self.assertTrue(AuditLog.objects.filter(action="email_print").exists())
+
+    def test_print_action_can_include_sent_replies(self):
+        Acknowledgement.objects.create(
+            email=self.email,
+            recipient="sender@example.test",
+            sender="mailbox@example.test",
+            body="Thanks for your message.",
+            status=Acknowledgement.Status.SENT,
+        )
+
+        detail = self.client.get(reverse("mails:detail", args=[self.email.pk]))
+        response = self.client.post(
+            reverse("mails:action", args=[self.email.pk, "print"]),
+            {"include_replies": "1"},
+        )
+
+        self.assertContains(detail, "Include sent replies")
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(PrintJob.objects.get(email=self.email).print_replies)
 
     def test_operator_can_queue_printable_attachments_without_email_body(self):
         self.email.status = ReceivedEmail.Status.PRINTED

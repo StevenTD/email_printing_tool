@@ -32,11 +32,14 @@ def create_print_job(
     printer_name="",
     copies=1,
     print_email_body=True,
+    print_replies=False,
     print_attachments=True,
     requested_by=None,
     explicit_reprint=False,
     automatic=False,
 ):
+    if print_replies and not print_email_body:
+        raise PrintPipelineError("Replies can only be included when printing the email body.")
     if email.status == ReceivedEmail.Status.PRINTED and not explicit_reprint:
         raise PrintPipelineError("This email is already printed; request an explicit reprint.")
     if email.print_jobs.filter(
@@ -50,6 +53,7 @@ def create_print_job(
         printer_name=printer_name,
         copies=copies,
         print_email_body=print_email_body,
+        print_replies=print_replies,
         print_attachments=print_attachments,
         requested_by=requested_by,
         explicit_reprint=explicit_reprint,
@@ -168,7 +172,10 @@ def _print_job_files(job, email, configuration, printer_name, dry_run):
         temporary_path = Path(temporary_directory)
         if job.print_email_body:
             try:
-                body_pdf = render_email_to_pdf(email)
+                body_pdf = render_email_to_pdf(
+                    email,
+                    include_replies=job.print_replies,
+                )
                 email.body_pdf_file.save("body.pdf", ContentFile(body_pdf), save=True)
                 outputs.append(("Email body.pdf", Path(email.body_pdf_file.path)))
             except Exception as exc:

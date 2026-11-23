@@ -111,7 +111,8 @@ def email_detail(request, email_id):
         ),
         pk=email_id,
     )
-    for reply in email.acknowledgements.all():
+    replies = list(email.acknowledgements.all())
+    for reply in replies:
         reply.safe_body_html = sanitize_email_html(reply.body_html)
 
     return render(
@@ -120,6 +121,10 @@ def email_detail(request, email_id):
         {
             "email": email,
             "safe_body_html": sanitize_email_html(email.body_html),
+            "has_sent_replies": any(
+                reply.status == Acknowledgement.Status.SENT
+                for reply in replies
+            ),
             "has_printable_attachments": any(
                 attachment.printable and attachment.file
                 for attachment in email.attachments.all()
@@ -263,6 +268,7 @@ def _apply_email_action(request, email, action):
                 email,
                 requested_by=request.user,
                 explicit_reprint=action == "reprint",
+                print_replies=request.POST.get("include_replies") == "1",
             )
         except PrintPipelineError as exc:
             return str(exc)

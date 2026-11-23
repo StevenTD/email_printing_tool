@@ -4,6 +4,20 @@
 
 {% block extra_head %}
 <style>
+  .email-action-button {
+    display: inline-flex;
+    width: 180px;
+    height: 38px;
+    align-items: center;
+    justify-content: center;
+  }
+  .email-action-form {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: .35rem;
+    margin: 0;
+  }
   .email-message {
     padding: 1.25rem 1.5rem;
   }
@@ -95,51 +109,56 @@
       <h1 class="h2 mt-2 mb-1">{{ email.subject|default:"(no subject)" }}</h1>
       <div class="text-body-secondary">{{ email.sender|default:"(unknown sender)" }}</div>
     </div>
-    <div class="d-flex flex-wrap gap-2">
-      <a class="btn btn-outline-primary" href="{% url 'mails:acknowledgement' email.pk %}">
+    <div class="d-flex flex-wrap align-items-start gap-2 email-actions">
+      <a class="btn btn-outline-primary email-action-button" href="{% url 'mails:acknowledgement' email.pk %}">
         Send acknowledgement
       </a>
       {% if has_printable_attachments %}
-        <form method="post" action="{% url 'mails:action' email.pk 'print_attachments' %}">
+        <form method="post" action="{% url 'mails:action' email.pk 'print_attachments' %}" class="email-action-form">
           {% csrf_token %}
-          <button class="btn btn-outline-primary" type="submit">Print attachments only</button>
+          <button class="btn btn-outline-primary email-action-button" type="submit">Print attachments only</button>
         </form>
       {% endif %}
-      {% if email.status == "printed" %}
-        <form method="post" action="{% url 'mails:action' email.pk 'reprint' %}">
-          {% csrf_token %}
-          <button class="btn btn-primary" type="submit">Reprint</button>
-        </form>
-      {% else %}
-        <form method="post" action="{% url 'mails:action' email.pk 'print' %}">
-          {% csrf_token %}
-          <button class="btn btn-primary" type="submit">Print now</button>
-        </form>
-      {% endif %}
+      {% url 'mails:action' email.pk 'print' as print_action_url %}
+      {% url 'mails:action' email.pk 'reprint' as reprint_action_url %}
+      <form method="post" action="{% if email.status == 'printed' %}{{ reprint_action_url }}{% else %}{{ print_action_url }}{% endif %}" class="email-action-form">
+        {% csrf_token %}
+        {% if email.status == "printed" %}
+          <button class="btn btn-primary email-action-button" type="submit">Reprint</button>
+        {% else %}
+          <button class="btn btn-primary email-action-button" type="submit">Print now</button>
+        {% endif %}
+        {% if has_sent_replies %}
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="include_replies" value="1" id="print-include-replies">
+            <label class="form-check-label" for="print-include-replies">Include sent replies</label>
+          </div>
+        {% endif %}
+      </form>
       {% if mailprint_is_admin %}
-        <form method="post" action="{% url 'mails:action' email.pk 'mark_printed' %}">
+        <form method="post" action="{% url 'mails:action' email.pk 'mark_printed' %}" class="email-action-form">
           {% csrf_token %}
-          <button class="btn btn-outline-success" type="submit">Mark as printed</button>
+          <button class="btn btn-outline-success email-action-button" type="submit">Mark as printed</button>
         </form>
-        <form method="post" action="{% url 'mails:action' email.pk 'mark_printing' %}">
+        <form method="post" action="{% url 'mails:action' email.pk 'mark_printing' %}" class="email-action-form">
           {% csrf_token %}
-          <button class="btn btn-outline-primary" type="submit">Mark as printing</button>
+          <button class="btn btn-outline-primary email-action-button" type="submit">Mark as printing</button>
         </form>
-        <form method="post" action="{% url 'mails:action' email.pk 'hold' %}">
+        <form method="post" action="{% url 'mails:action' email.pk 'hold' %}" class="email-action-form">
           {% csrf_token %}
-          <button class="btn btn-outline-warning" type="submit">Hold</button>
+          <button class="btn btn-outline-warning email-action-button" type="submit">Hold</button>
         </form>
-        <form method="post" action="{% url 'mails:action' email.pk 'skip' %}">
+        <form method="post" action="{% url 'mails:action' email.pk 'skip' %}" class="email-action-form">
           {% csrf_token %}
-          <button class="btn btn-outline-secondary" type="submit">Ignore</button>
+          <button class="btn btn-outline-secondary email-action-button" type="submit">Ignore</button>
         </form>
-        <form method="post" action="{% url 'mails:action' email.pk 'reset_status' %}">
+        <form method="post" action="{% url 'mails:action' email.pk 'reset_status' %}" class="email-action-form">
           {% csrf_token %}
-          <button class="btn btn-outline-dark" type="submit">Reset status</button>
+          <button class="btn btn-outline-dark email-action-button" type="submit">Reset status</button>
         </form>
-        <form method="post" action="{% url 'mails:action' email.pk 'delete' %}">
+        <form method="post" action="{% url 'mails:action' email.pk 'delete' %}" class="email-action-form">
           {% csrf_token %}
-          <button class="btn btn-outline-danger" type="submit">Delete</button>
+          <button class="btn btn-outline-danger email-action-button" type="submit">Delete</button>
         </form>
       {% endif %}
     </div>

@@ -54,6 +54,10 @@
   <div class="d-flex flex-wrap gap-2 mb-2">
     <span class="small text-body-secondary align-self-center me-1">Apply to selected:</span>
     <button class="btn btn-sm btn-outline-primary" type="submit" form="bulk-action-form" name="action" value="print">Print</button>
+    <div class="form-check align-self-center ms-2">
+      <input class="form-check-input" type="checkbox" name="include_replies" value="1" form="bulk-action-form" id="bulk-include-replies">
+      <label class="form-check-label small" for="bulk-include-replies">Include sent replies</label>
+    </div>
     {% if mailprint_is_admin %}
       <button class="btn btn-sm btn-outline-success" type="submit" form="bulk-action-form" name="action" value="mark_printed">Mark printed</button>
       <button class="btn btn-sm btn-outline-warning" type="submit" form="bulk-action-form" name="action" value="hold">Hold</button>

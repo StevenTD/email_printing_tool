@@ -5,6 +5,7 @@ from pathlib import Path
 
 from decouple import config
 from django.utils import timezone
+from mails.models import Acknowledgement
 from mails.rendering import sanitize_email_html
 from PIL import Image, UnidentifiedImageError
 from playwright.sync_api import Error as PlaywrightError
@@ -13,17 +14,41 @@ from playwright.sync_api import sync_playwright
 
 OFFICE_EXTENSIONS = {".doc", ".docx", ".xls", ".xlsx", ".odt", ".ods", ".rtf"}
 IMAGE_EXTENSIONS = {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
+PDF_PAGE_MARGINS = {
+    "top": "10mm",
+    "right": "12mm",
+    "bottom": "16mm",
+    "left": "12mm",
+}
 
 
 class ConversionError(Exception):
     pass
 
 
-def build_email_html(email):
+def build_email_html(email, *, include_replies=False):
     if email.body_html:
         body = sanitize_email_html(email.body_html)
     else:
         body = f"<pre>{escape(email.body_text or '(No body content.)')}</pre>"
+
+    replies_html = ""
+    if include_replies and email.pk:
+        replies = list(
+            email.acknowledgements.filter(
+                status=Acknowledgement.Status.SENT,
+            ).order_by("sent_at", "pk")
+        )
+        rendered_replies = "".join(
+            _reply_html(reply)
+            for reply in replies
+        )
+        if rendered_replies:
+            replies_html = (
+                '<section class="reply-thread">'
+                f"<h2>Replies ({len(replies)})</h2>"
+                f"{rendered_replies}</section>"
+            )
 
     metadata = [
         ("From", email.sender),
@@ -63,6 +88,9 @@ def build_email_html(email):
         for label, value in metadata
         if value
     )
+    page_margin_css = " ".join(
+        PDF_PAGE_MARGINS[side] for side in ("top", "right", "bottom", "left")
+    )
     generated_at = timezone.localtime().strftime("%b %d, %Y %I:%M:%S %p %Z")
 
     return f"""<!doctype html>
@@ -72,36 +100,49 @@ def build_email_html(email):
 <meta http-equiv="Content-Security-Policy"
  content="default-src 'none'; img-src data:; style-src 'unsafe-inline';">
 <style>
-@page {{ size: A4; margin: 15mm 15mm 22mm; }}
+@page {{ size: A4; margin: {page_margin_css}; }}
 * {{ box-sizing: border-box; }}
 body {{ margin: 0; font-family: Arial, sans-serif; font-size: 10pt; color: #17212b; }}
-.brand {{ color: #173b63; font-size: 10pt; font-weight: 700; letter-spacing: 1.4px; }}
-.document-header {{ border-top: 5px solid #173b63; border-bottom: 1px solid #cbd5df; padding: 12px 0 14px; }}
-h1 {{ margin: 9px 0 14px; font-size: 19pt; line-height: 1.25; overflow-wrap: anywhere; }}
-.metadata {{ width: 100%; border-collapse: collapse; table-layout: fixed; }}
-.metadata th, .metadata td {{ border: 0; border-top: 1px solid #e3e8ed; padding: 6px 8px; text-align: left; vertical-align: top; overflow-wrap: anywhere; white-space: pre-wrap; }}
-.metadata th {{ width: 24%; color: #526170; font-weight: 600; }}
-.metadata td {{ color: #17212b; }}
-.generated {{ color: #526170; font-size: 8.5pt; margin-top: 12px; }}
-.email-content {{ padding-top: 14px; overflow-wrap: anywhere; }}
-h2 {{ color: #173b63; font-size: 11pt; margin: 0 0 10px; text-transform: uppercase; letter-spacing: .5px; }}
+.brand {{ color: #173b63; font-size: 9pt; font-weight: 700; letter-spacing: 1px; }}
+.document-header {{ border-top: 3px solid #173b63; border-bottom: 1px solid #cbd5df; padding: 6px 0 8px; }}
+h1 {{ margin: 5px 0 8px; font-size: 18pt; line-height: 1.2; overflow-wrap: anywhere; }}
+.metadata {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; margin: 0; }}
+.metadata-item {{ display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 6px; min-width: 0; border-top: 1px solid #e3e8ed; padding: 3px 0; font-size: 9pt; }}
+.metadata-item-wide {{ grid-column: 1 / -1; }}
+.metadata-item dt {{ margin: 0; color: #526170; font-weight: 600; }}
+.metadata-item dd {{ min-width: 0; margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }}
+.generated {{ color: #526170; font-size: 8pt; margin-top: 6px; }}
+.email-content {{ padding-top: 8px; overflow-wrap: anywhere; }}
+h2 {{ color: #173b63; font-size: 10pt; margin: 0 0 6px; text-transform: uppercase; letter-spacing: .4px; }}
 .email-content img {{ max-width: 100%; height: auto; }}
 .email-content table {{ border-collapse: collapse; max-width: 100%; }}
-.email-content td, .email-content th {{ border: 1px solid #aeb8c2; padding: 4px; }}
-.email-content pre {{ white-space: pre-wrap; overflow-wrap: anywhere; font-family: Arial, sans-serif; }}
+.email-content td, .email-content th {{ border: 1px solid #aeb8c2; padding: 3px; }}
+.email-content p {{ margin: 0 0 6px; }}
+.email-content > :first-child {{ margin-top: 0; }}
+.email-content > :last-child {{ margin-bottom: 0; }}
+.email-content h1, .email-content h2, .email-content h3, .email-content h4 {{ margin: 10px 0 5px; break-after: avoid-page; }}
+.email-content ul, .email-content ol {{ margin: 4px 0; padding-left: 20px; }}
+.email-content li {{ margin-bottom: 2px; }}
+.email-content blockquote {{ margin: 6px 0; padding-left: 10px; }}
+.email-content pre {{ margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }}
 .email-content a {{ color: #173b63; overflow-wrap: anywhere; }}
+.reply-thread {{ margin-top: 12px; }}
+.reply {{ border-top: 1px solid #cbd5df; padding: 6px 0; }}
+.reply-header {{ display: flex; justify-content: space-between; gap: 12px; font-size: 9pt; overflow-wrap: anywhere; }}
+.reply-body {{ padding-top: 4px; }}
 </style>
 </head>
 <body>
 <header class="document-header">
   <div class="brand">MAILPRINT <span>EMAIL RECORD</span></div>
   <h1>{escape(email.subject or "(No subject)")}</h1>
-  <table class="metadata"><tbody>{metadata_html}</tbody></table>
+  <dl class="metadata">{metadata_html}</dl>
   <div class="generated">Print copy generated: {escape(generated_at)}</div>
 </header>
 <main class="email-content">
   <h2>Message body</h2>
   {body}
+  {replies_html}
 </main>
 </body>
 </html>"""
@@ -109,7 +150,7 @@ h2 {{ color: #173b63; font-size: 11pt; margin: 0 0 10px; text-transform: upperca
 
 def build_email_footer_html(email):
     sender = escape(email.sender or "Unknown sender")
-    return f"""<div style="font-family:Arial,sans-serif;font-size:8px;color:#526170;width:100%;padding:0 15mm;box-sizing:border-box;">
+    return f"""<div style="font-family:Arial,sans-serif;font-size:8px;color:#526170;width:100%;padding:0 12mm;box-sizing:border-box;">
 <div style="border-top:1px solid #cbd5df;padding-top:5px;">
 Source email: {sender}
 </div>
@@ -129,14 +170,35 @@ def _format_datetime(value):
 
 
 def _metadata_row(label, value):
+    wide_labels = {"To", "Cc", "Bcc", "Recipients", "Message ID", "Attachments"}
+    class_name = "metadata-item metadata-item-wide" if label in wide_labels else "metadata-item"
     return (
-        f"<tr><th>{escape(label)}</th>"
-        f"<td>{escape(str(value))}</td></tr>"
+        f'<div class="{class_name}"><dt>{escape(label)}</dt>'
+        f"<dd>{escape(str(value))}</dd></div>"
     )
 
 
-def render_email_to_pdf(email):
-    html = build_email_html(email)
+def _reply_html(reply):
+    sender = escape(reply.sender or "You")
+    recipient = escape(reply.recipient or "Unknown recipient")
+    sent_at = escape(_format_datetime(reply.sent_at) or "Date unavailable")
+    safe_body_html = sanitize_email_html(reply.body_html)
+    if safe_body_html:
+        body = safe_body_html
+    elif reply.body and (not reply.body_html or reply.body != reply.body_html):
+        body = f"<pre>{escape(reply.body)}</pre>"
+    else:
+        body = "<p>(No displayable body content.)</p>"
+    return (
+        '<article class="reply">'
+        f'<header class="reply-header"><div><strong>From:</strong> {sender}'
+        f"<br><strong>To:</strong> {recipient}</div><time>{sent_at}</time></header>"
+        f'<div class="email-content reply-body">{body}</div></article>'
+    )
+
+
+def render_email_to_pdf(email, *, include_replies=False):
+    html = build_email_html(email, include_replies=include_replies)
     try:
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
@@ -151,12 +213,7 @@ def render_email_to_pdf(email):
                     display_header_footer=True,
                     header_template="<div></div>",
                     footer_template=build_email_footer_html(email),
-                    margin={
-                        "top": "15mm",
-                        "right": "15mm",
-                        "bottom": "22mm",
-                        "left": "15mm",
-                    },
+                    margin=PDF_PAGE_MARGINS,
                 )
             finally:
                 browser.close()

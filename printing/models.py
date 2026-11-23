@@ -62,6 +62,7 @@ class PrintJob(models.Model):
         validators=[MinValueValidator(1), MaxValueValidator(99)],
     )
     print_email_body = models.BooleanField(default=True)
+    print_replies = models.BooleanField(default=False)
     print_attachments = models.BooleanField(default=True)
     explicit_reprint = models.BooleanField(default=False)
     automatic = models.BooleanField(default=False, db_index=True)
