@@ -288,6 +288,23 @@ configured log directory. Task Scheduler's **Last Run Result** is useful for
 startup failures; the scripts also fail explicitly if the virtual environment
 or Waitress executable is missing.
 
+### Simple Django development-server launcher
+
+For local development or a trusted private LAN, double-click `run_mailprint.bat`
+to open the Django development server and Gmail/print worker in separate
+command windows. To start both automatically after the current Windows user
+signs in, run:
+
+```powershell
+.\run_mailprint.bat --install-startup
+```
+
+Remove the startup shortcut with `.\run_mailprint.bat --remove-startup`. This
+launcher uses Django's development server, not Waitress; `0.0.0.0:8000` may
+make it reachable from other devices on the network. Do not expose it directly
+to the public internet or forward port 8000 from your router. Keep the Windows
+user signed in so the worker can access printers.
+
 ### Stage 8 verification
 
 Run the application checks and tests without connecting to Gmail or printing:
