@@ -1,5 +1,5 @@
 import tempfile
-from datetime import date
+from datetime import date, datetime, timezone
 from email.message import EmailMessage
 from unittest.mock import patch
 
@@ -193,6 +193,10 @@ class MailFetcherTests(TestCase):
         reply["Subject"] = "Re: Original message"
         reply["Date"] = "Wed, 12 Mar 2025 09:30:00 +0000"
         reply.set_content("I have received your email.")
+        reply.add_alternative(
+            "<html><body><p><strong>I have received your email.</strong></p></body></html>",
+            subtype="html",
+        )
         raw_reply = reply.as_bytes()
         unrelated = EmailMessage()
         unrelated["Message-ID"] = "<unrelated@example.test>"
@@ -263,7 +267,9 @@ class MailFetcherTests(TestCase):
         self.assertEqual(summary.replies, 1)
         self.assertEqual(imported_reply.source, Acknowledgement.Source.GMAIL)
         self.assertEqual(imported_reply.status, Acknowledgement.Status.SENT)
+        self.assertEqual(imported_reply.sender, "mailbox@example.test")
         self.assertEqual(imported_reply.body.strip(), "I have received your email.")
+        self.assertIn("<strong>I have received your email.</strong>", imported_reply.body_html)
         self.assertTrue(email.acknowledged)
         self.assertEqual(configuration.imap_sent_last_uid, 91)
         self.assertEqual(second_summary.replies, 0)
@@ -558,17 +564,48 @@ class MailInboxViewTests(TestCase):
             email=self.email,
             source=Acknowledgement.Source.GMAIL,
             recipient="sender@example.test",
+            sender="firstbox@example.test",
+            subject="Re: Quarterly report",
+            body="Earlier reply.",
+            sent_at=datetime(2025, 3, 12, 9, tzinfo=timezone.utc),
+            status=Acknowledgement.Status.SENT,
+        )
+        Acknowledgement.objects.create(
+            email=self.email,
+            source=Acknowledgement.Source.GMAIL,
+            recipient="sender@example.test",
+            sender="mailbox@example.test",
             subject="Re: Quarterly report",
             body="I have received your email.",
+            body_html=(
+                '<p onclick="bad()"><strong>I have received your email.</strong></p>'
+                "<script>unsafe()</script>"
+            ),
             message_id="<reply@example.test>",
+            sent_at=datetime(2025, 3, 12, 10, tzinfo=timezone.utc),
             status=Acknowledgement.Status.SENT,
         )
 
         response = self.client.get(reverse("mails:detail", args=[self.email.pk]))
+        response_body = response.content.decode()
 
-        self.assertContains(response, "Replies")
+        self.assertContains(response, "Conversation")
+        self.assertContains(response, "mailbox@example.test")
         self.assertContains(response, "Gmail Sent")
-        self.assertContains(response, "I have received your email.")
+        self.assertContains(
+            response,
+            "<p><strong>I have received your email.</strong></p>",
+            html=True,
+        )
+        self.assertContains(response, "Reply 1")
+        self.assertContains(response, "Reply 2")
+        self.assertLess(
+            response_body.index("Earlier reply."),
+            response_body.index("I have received your email."),
+        )
+        self.assertNotContains(response, "<script>")
+        self.assertNotContains(response, "onclick")
+        self.assertNotContains(response, "<pre")
 
     def test_print_action_queues_job(self):
         response = self.client.post(
@@ -745,6 +782,8 @@ class AcknowledgementTests(TestCase):
         second.refresh_from_db()
         self.assertEqual(first.status, Acknowledgement.Status.SENT)
         self.assertEqual(second.status, Acknowledgement.Status.SENT)
+        self.assertEqual(first.sender, self.configuration.imap_email)
+        self.assertEqual(second.sender, self.configuration.imap_email)
         self.assertEqual(smtp.send_message.call_count, 2)
         self.email.refresh_from_db()
         self.assertTrue(self.email.acknowledged)

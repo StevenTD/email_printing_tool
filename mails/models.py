@@ -100,8 +100,10 @@ class Acknowledgement(models.Model):
         default=Source.MAILPRINT,
     )
     recipient = models.CharField(max_length=998)
+    sender = models.CharField(max_length=998, blank=True)
     subject = models.CharField(max_length=998, blank=True)
     body = models.TextField()
+    body_html = models.TextField(blank=True)
     template_name = models.CharField(max_length=150, blank=True)
     message_id = models.CharField(max_length=998, blank=True)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.SENDING)

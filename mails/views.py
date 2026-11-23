@@ -6,7 +6,7 @@ from django.core.exceptions import PermissionDenied
 from django.core import signing
 from django.core.files.storage import default_storage
 from django.core.paginator import Paginator
-from django.db.models import Exists, OuterRef, Q
+from django.db.models import Exists, F, OuterRef, Prefetch, Q
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -101,10 +101,19 @@ def email_detail(request, email_id):
         ReceivedEmail.objects.prefetch_related(
             "attachments",
             "print_logs",
-            "acknowledgements",
+            Prefetch(
+                "acknowledgements",
+                queryset=Acknowledgement.objects.order_by(
+                    F("sent_at").asc(nulls_last=True),
+                    "pk",
+                ),
+            ),
         ),
         pk=email_id,
     )
+    for reply in email.acknowledgements.all():
+        reply.safe_body_html = sanitize_email_html(reply.body_html)
+
     return render(
         request,
         "mails/detail.html",

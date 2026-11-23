@@ -152,6 +152,7 @@ def send_acknowledgement(email, template, *, user=None, confirm_duplicate=False)
             acknowledgement = Acknowledgement.objects.create(
                 email=locked_email,
                 recipient=recipient,
+                sender=str(message["From"]),
                 subject=subject,
                 body=body,
                 template_name=template.name,

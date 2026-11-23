@@ -2,6 +2,91 @@
 
 {% block title %}{{ email.subject|default:"Email detail" }} · MailPrint{% endblock %}
 
+{% block extra_head %}
+<style>
+  .email-message {
+    padding: 1.25rem 1.5rem;
+  }
+  .email-message + .email-message {
+    border-top: 1px solid var(--bs-border-color);
+  }
+  .email-message-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+  }
+  .email-message-sender {
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+    min-width: 0;
+  }
+  .email-message-avatar {
+    display: grid;
+    flex: 0 0 2.5rem;
+    width: 2.5rem;
+    height: 2.5rem;
+    place-items: center;
+    border-radius: 50%;
+    background: #e8f0fe;
+    color: #174ea6;
+    font-weight: 600;
+  }
+  .email-thread-content {
+    max-width: 900px;
+    padding-top: 1rem;
+    color: #202124;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 1rem;
+    line-height: 1.65;
+    overflow-wrap: anywhere;
+  }
+  .email-thread-content > :last-child {
+    margin-bottom: 0;
+  }
+  .email-thread-content img,
+  .email-thread-content table {
+    max-width: 100%;
+  }
+  .email-thread-content img {
+    height: auto;
+  }
+  .email-thread-content pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .email-message-separator {
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+    padding: .5rem 1.5rem;
+    border-top: 1px solid var(--bs-border-color);
+    background: var(--bs-tertiary-bg);
+    color: var(--bs-secondary-color);
+    font-size: .8rem;
+    font-weight: 600;
+  }
+  .email-message-separator::after {
+    flex: 1;
+    border-top: 1px solid var(--bs-border-color);
+    content: "";
+  }
+  @media (max-width: 575.98px) {
+    .email-message {
+      padding: 1rem;
+    }
+    .email-message-header {
+      flex-direction: column;
+      gap: .5rem;
+    }
+    .email-message-separator {
+      padding-inline: 1rem;
+    }
+  }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="mx-auto" style="max-width: 1500px">
   <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
@@ -62,9 +147,14 @@
 
   <div class="row g-3">
     <div class="col-12 col-xl-8">
-      <section class="card shadow-sm mb-3">
-        <div class="card-header bg-white d-flex justify-content-between align-items-center">
-          <h2 class="h5 mb-0">Email</h2>
+      <section class="card shadow-sm mb-3 email-thread">
+        <div class="card-header bg-white d-flex flex-wrap justify-content-between align-items-center gap-2">
+          <div>
+            <h2 class="h5 mb-0">Conversation</h2>
+            <div class="small text-body-secondary">
+              {{ email.acknowledgements.all|length }} {% if email.acknowledgements.all|length == 1 %}reply{% else %}replies{% endif %}
+            </div>
+          </div>
           <div class="d-flex gap-2">
             <span class="badge text-bg-secondary">{{ email.get_status_display }}</span>
             {% if email.acknowledged %}
@@ -72,28 +162,80 @@
             {% endif %}
           </div>
         </div>
-        <div class="card-body">
-          <dl class="row mb-0">
-            <dt class="col-sm-3">From</dt><dd class="col-sm-9">{{ email.sender|default:"—" }}</dd>
-            <dt class="col-sm-3">To</dt><dd class="col-sm-9">{{ email.recipients|join:", "|default:"—" }}</dd>
-            <dt class="col-sm-3">Received</dt><dd class="col-sm-9">{% if email.date_received %}{{ email.date_received|date:"Y-m-d H:i:s T" }}{% else %}—{% endif %}</dd>
-            <dt class="col-sm-3">Message-ID</dt><dd class="col-sm-9 text-break">{{ email.message_id|default:"—" }}</dd>
-          </dl>
+        <article class="email-message">
+          <header class="email-message-header">
+            <div class="email-message-sender">
+              <span class="email-message-avatar" aria-hidden="true">{{ email.sender|first|upper|default:"?" }}</span>
+              <div class="min-w-0">
+                <div class="fw-semibold text-break">{{ email.sender|default:"Unknown sender" }}</div>
+                <div class="small text-body-secondary text-break">
+                  To {% if email.to_recipients %}{{ email.to_recipients|join:", " }}{% else %}{{ email.recipients|join:", "|default:"—" }}{% endif %}
+                  {% if email.cc_recipients %} · Cc {{ email.cc_recipients|join:", " }}{% endif %}
+                </div>
+              </div>
+            </div>
+            <time class="small text-body-secondary text-nowrap" {% if email.date_received %}datetime="{{ email.date_received|date:'c' }}"{% endif %}>
+              {% if email.date_received %}{{ email.date_received|date:"M j, Y, g:i A" }}{% else %}Date unavailable{% endif %}
+            </time>
+          </header>
+          <div class="email-thread-content">
+            {% if safe_body_html %}
+              {{ safe_body_html|safe }}
+            {% else %}
+              {{ email.body_text|linebreaksbr|default:"(No body content.)" }}
+            {% endif %}
+          </div>
+          <details class="small mt-3">
+            <summary class="text-body-secondary">Message details</summary>
+            <dl class="row mt-2 mb-0">
+              <dt class="col-sm-3">To</dt><dd class="col-sm-9 text-break">{% if email.to_recipients %}{{ email.to_recipients|join:", " }}{% else %}{{ email.recipients|join:", "|default:"—" }}{% endif %}</dd>
+              {% if email.cc_recipients %}<dt class="col-sm-3">Cc</dt><dd class="col-sm-9 text-break">{{ email.cc_recipients|join:", " }}</dd>{% endif %}
+              {% if email.bcc_recipients %}<dt class="col-sm-3">Bcc</dt><dd class="col-sm-9 text-break">{{ email.bcc_recipients|join:", " }}</dd>{% endif %}
+              <dt class="col-sm-3">Message-ID</dt><dd class="col-sm-9 text-break">{{ email.message_id|default:"—" }}</dd>
+            </dl>
+          </details>
           {% if email.error_message %}
             <div class="alert alert-danger mt-3 mb-0">{{ email.error_message }}</div>
           {% endif %}
-        </div>
-      </section>
-
-      <section class="card shadow-sm mb-3">
-        <div class="card-header bg-white"><h2 class="h5 mb-0">Message body</h2></div>
-        <div class="card-body">
-          {% if safe_body_html %}
-            <div class="email-preview">{{ safe_body_html|safe }}</div>
-          {% else %}
-            <div class="text-break">{{ email.body_text|linebreaksbr|default:"(No body content.)" }}</div>
-          {% endif %}
-        </div>
+        </article>
+        {% for entry in email.acknowledgements.all %}
+          <div class="email-message-separator">Reply {{ forloop.counter }}</div>
+          <article class="email-message">
+            <header class="email-message-header">
+              <div class="email-message-sender">
+                <span class="email-message-avatar" aria-hidden="true">{{ entry.sender|default:"You"|first|upper }}</span>
+                <div class="min-w-0">
+                  <div class="fw-semibold text-break">{{ entry.sender|default:"You" }}</div>
+                  <div class="small text-body-secondary text-break">To {{ entry.recipient|default:"—" }}</div>
+                </div>
+              </div>
+              <div class="text-sm-end">
+                <time class="small text-body-secondary text-nowrap" {% if entry.sent_at %}datetime="{{ entry.sent_at|date:'c' }}"{% endif %}>
+                  {% if entry.sent_at %}{{ entry.sent_at|date:"M j, Y, g:i A" }}{% else %}Date unavailable{% endif %}
+                </time>
+                <div class="d-flex justify-content-sm-end flex-wrap gap-1 mt-1">
+                  <span class="badge text-bg-light border text-secondary">{{ entry.get_source_display }}</span>
+                  <span class="badge {% if entry.status == 'sent' %}text-bg-success{% elif entry.status == 'failed' %}text-bg-danger{% else %}text-bg-warning{% endif %}">{{ entry.get_status_display }}</span>
+                </div>
+              </div>
+            </header>
+            {% if entry.subject %}
+              <div class="small text-body-secondary mt-2">{{ entry.subject }}</div>
+            {% endif %}
+            <div class="email-thread-content">
+              {% if entry.safe_body_html %}
+                {{ entry.safe_body_html|safe }}
+              {% elif entry.body and not entry.body_html %}
+                {{ entry.body|linebreaksbr }}
+              {% else %}
+                <span class="text-body-secondary">(No displayable body content.)</span>
+              {% endif %}
+            </div>
+            {% if entry.error_message %}<div class="alert alert-danger mt-3 mb-0">{{ entry.error_message }}</div>{% endif %}
+          </article>
+        {% empty %}
+          <div class="border-top p-3 text-body-secondary">No replies have been detected.</div>
+        {% endfor %}
         {% if email.raw_email_file %}
           <div class="card-footer bg-white">
             <a href="{% url 'mails:download_raw_email' email.pk %}">Download raw .eml</a>
@@ -150,27 +292,6 @@
             </div>
           {% empty %}
             <div class="list-group-item text-body-secondary">No print history.</div>
-          {% endfor %}
-        </div>
-      </section>
-
-      <section class="card shadow-sm">
-        <div class="card-header bg-white"><h2 class="h5 mb-0">Replies</h2></div>
-        <div class="list-group list-group-flush">
-          {% for entry in email.acknowledgements.all %}
-            <div class="list-group-item">
-              <strong>{{ entry.recipient }}</strong>
-              <div class="small text-body-secondary">
-                {{ entry.get_status_display }}
-                {% if entry.sent_at %} · {{ entry.sent_at|date:"Y-m-d H:i" }}{% endif %}
-                {% if entry.sent_by %} · {{ entry.sent_by.get_username }}{% endif %}
-                {% if entry.source == "gmail" %} · Gmail Sent{% endif %}
-              </div>
-              {% if entry.error_message %}<div class="small text-danger">{{ entry.error_message }}</div>{% endif %}
-              <pre class="small text-wrap mb-0 mt-2">{{ entry.body }}</pre>
-            </div>
-          {% empty %}
-            <div class="list-group-item text-body-secondary">No replies have been detected.</div>
           {% endfor %}
         </div>
       </section>
