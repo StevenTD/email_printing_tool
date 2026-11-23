@@ -273,6 +273,7 @@ class MailFetcher:
         max_attachment_bytes=25 * 1024 * 1024,
         fetch_since_date=None,
         fetch_seen_emails=False,
+        status_callback=None,
     ):
         self.configuration = configuration
         self.connection_factory = connection_factory or imaplib.IMAP4_SSL
@@ -280,8 +281,10 @@ class MailFetcher:
         self.max_attachment_bytes = max_attachment_bytes
         self.fetch_since_date = fetch_since_date
         self.fetch_seen_emails = fetch_seen_emails
+        self.status_callback = status_callback
 
     def fetch_messages(self):
+        self._report_status("Connecting to Gmail IMAP (imap.gmail.com:993).")
         connection = self.connection_factory("imap.gmail.com", 993, timeout=30)
         summary = FetchSummary()
         try:
@@ -289,10 +292,12 @@ class MailFetcher:
                 self.configuration.imap_email,
                 self.configuration.get_imap_app_password(),
             ), "Gmail login")
+            self._report_status("Gmail IMAP login succeeded.")
             summary.replies, reply_errors = self._fetch_sent_replies(connection)
             summary.errors += reply_errors
 
             folder = self.configuration.imap_folder
+            self._report_status(f"Selecting Gmail inbox folder {folder!r}.")
             self._require_ok(connection.select(_quote_mailbox(folder)), f"Select folder {folder!r}")
             uidvalidity = _uid_validity(connection)
 
@@ -306,9 +311,16 @@ class MailFetcher:
             self._require_ok((status, data), "Search for messages")
             message_uids = data[0].split() if data and data[0] else []
             summary.discovered = len(message_uids)
+            self._report_status(
+                f"Found {summary.discovered} inbox message(s) to check."
+            )
 
-            for uid_bytes in message_uids:
+            for index, uid_bytes in enumerate(message_uids, start=1):
                 uid = int(uid_bytes)
+                if index == 1 or index % 100 == 0:
+                    self._report_status(
+                        f"Checking inbox messages: {index} of {summary.discovered}."
+                    )
                 existing = ReceivedEmail.objects.filter(
                     imap_folder=folder,
                     imap_uidvalidity=uidvalidity,
@@ -345,6 +357,10 @@ class MailFetcher:
                 except Exception as exc:
                     summary.errors += 1
                     _log(WorkerLog.Level.ERROR, f"UID {uid}: {exc}")
+            self._report_status(
+                f"Inbox check complete: {summary.stored} stored, "
+                f"{summary.duplicates} already stored."
+            )
             return summary
         finally:
             try:
@@ -355,11 +371,16 @@ class MailFetcher:
     def _fetch_sent_replies(self, connection):
         folder = self.configuration.imap_sent_folder.strip()
         if not folder:
+            self._report_status("Gmail Sent-folder reply sync is disabled.")
             return 0, 0
 
+        self._report_status(f"Checking Gmail Sent folder {folder!r}.")
         status, data = connection.select(_quote_mailbox(folder))
         if status != "OK":
             detail = data[0] if data else "no server detail"
+            self._report_status(
+                f"Could not select Gmail Sent folder {folder!r}: {detail!r}"
+            )
             _log(
                 WorkerLog.Level.ERROR,
                 f"Could not select Gmail Sent folder {folder!r}: {detail!r}",
@@ -378,6 +399,9 @@ class MailFetcher:
         result = connection.uid("SEARCH", None, *search_criteria)
         if result[0] != "OK":
             detail = result[1][0] if result[1] else "no server detail"
+            self._report_status(
+                f"Could not search Gmail Sent folder {folder!r}: {detail!r}"
+            )
             _log(
                 WorkerLog.Level.ERROR,
                 f"Could not search Gmail Sent folder {folder!r}: {detail!r}",
@@ -385,12 +409,19 @@ class MailFetcher:
             return 0, 1
 
         uids = result[1][0].split() if result[1] and result[1][0] else []
+        self._report_status(
+            f"Found {len(uids)} Gmail Sent message(s) to check for replies."
+        )
         latest_uid = last_uid
         reply_count = 0
         error_count = 0
-        for uid_bytes in uids:
+        for index, uid_bytes in enumerate(uids, start=1):
             uid = int(uid_bytes)
             latest_uid = max(latest_uid, uid)
+            if index == 1 or index % 100 == 0:
+                self._report_status(
+                    f"Checking Gmail Sent messages: {index} of {len(uids)}."
+                )
             try:
                 raw_message = self._fetch_raw_message(connection, uid)
                 if self._record_sent_reply(raw_message):
@@ -417,6 +448,10 @@ class MailFetcher:
                         "updated_at",
                     ]
                 )
+        self._report_status(
+            f"Gmail Sent check complete: {reply_count} reply/replies recorded, "
+            f"{error_count} errors."
+        )
         return reply_count, error_count
 
     def _record_sent_reply(self, raw_message):
@@ -467,6 +502,10 @@ class MailFetcher:
         if status != "OK":
             detail = data[0] if data else "no server detail"
             raise ConnectionError(f"{operation} failed: {detail!r}")
+
+    def _report_status(self, message):
+        if self.status_callback is not None:
+            self.status_callback(message)
 
     def _fetch_raw_message(self, connection, uid):
         result = connection.uid("FETCH", str(uid), "(BODY.PEEK[])")

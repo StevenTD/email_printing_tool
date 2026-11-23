@@ -43,6 +43,8 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        self.stdout.write("Starting MailPrint worker...")
+        self.stdout.flush()
         fetch_since_date = _configured_fetch_since_date()
         fetch_seen_emails = config(
             "MAILPRINT_FETCH_SEEN_EMAILS",
@@ -61,11 +63,24 @@ class Command(BaseCommand):
         heartbeat.save()
         logger.info("Starting MailPrint worker (pid=%s).", os.getpid())
 
+        def report_status(message):
+            self.stdout.write(message)
+            self.stdout.flush()
+            logger.info(message)
+            heartbeat.last_seen_at = timezone.now()
+            heartbeat.save(update_fields=["last_seen_at"])
+
+        report_status(
+            "Worker is running. Gmail credentials are configured; "
+            f"poll interval is {configuration.poll_interval_seconds} seconds."
+        )
+
         try:
             while True:
                 configuration.refresh_from_db()
                 poll_error = None
                 try:
+                    report_status("Starting Gmail poll.")
                     fetcher = MailFetcher(
                         configuration,
                         max_email_bytes=config(
@@ -80,6 +95,7 @@ class Command(BaseCommand):
                         ),
                         fetch_since_date=fetch_since_date,
                         fetch_seen_emails=fetch_seen_emails,
+                        status_callback=report_status,
                     )
                     summary = fetcher.fetch_messages()
                 except Exception as exc:
@@ -95,6 +111,7 @@ class Command(BaseCommand):
                     heartbeat.last_seen_at = timezone.now()
                     heartbeat.save(update_fields=["last_error", "last_seen_at"])
                     self.stderr.write(self.style.ERROR(message))
+                    self.stderr.flush()
                 else:
                     heartbeat.last_fetch_at = timezone.now()
                     heartbeat.last_seen_at = heartbeat.last_fetch_at
@@ -102,7 +119,7 @@ class Command(BaseCommand):
                     heartbeat.save(
                         update_fields=["last_fetch_at", "last_seen_at", "last_error"]
                     )
-                    self.stdout.write(
+                    report_status(
                         "Gmail poll complete: "
                         f"{summary.stored} stored, {summary.duplicates} duplicates, "
                         f"{summary.replies} replies synchronized, "
@@ -117,6 +134,7 @@ class Command(BaseCommand):
                         summary.errors,
                     )
 
+                report_status("Checking queued print jobs.")
                 processed_jobs = 0
                 while True:
                     job = process_next_job()
@@ -124,16 +142,19 @@ class Command(BaseCommand):
                         break
                     processed_jobs += 1
                 if processed_jobs:
-                    self.stdout.write(f"Processed {processed_jobs} print job(s).")
+                    report_status(f"Processed {processed_jobs} print job(s).")
                     logger.info("Processed %s print job(s).", processed_jobs)
 
                 if options["once"]:
                     if poll_error:
                         raise CommandError(poll_error)
                     return
+                report_status(
+                    f"Next Gmail poll in {configuration.poll_interval_seconds} seconds."
+                )
                 time.sleep(configuration.poll_interval_seconds)
         except KeyboardInterrupt:
-            self.stdout.write("Stopping Gmail worker.")
+            report_status("Stopping Gmail worker.")
             logger.info("Stopping MailPrint worker.")
         finally:
             heartbeat.refresh_from_db()
@@ -143,4 +164,6 @@ class Command(BaseCommand):
             heartbeat.save(
                 update_fields=["running", "process_id", "last_seen_at"]
             )
+            self.stdout.write("MailPrint worker stopped.")
+            self.stdout.flush()
             logger.info("MailPrint worker stopped.")

@@ -1,4 +1,6 @@
 from datetime import date
+from io import StringIO
+from types import SimpleNamespace
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
@@ -43,6 +45,59 @@ class FetchSinceConfigurationTests(SimpleTestCase):
     def test_rejects_non_iso_cutoff_date(self, _config):
         with self.assertRaises(CommandError):
             _configured_fetch_since_date()
+
+
+class WorkerOutputTests(TestCase):
+    def test_worker_flushes_startup_and_gmail_poll_status(self):
+        AppConfiguration.objects.create(
+            imap_email="mailbox@example.test",
+            imap_app_password_encrypted="configured",
+        )
+        fetcher_startup_output = []
+
+        class FlushTrackingStream(StringIO):
+            def __init__(self):
+                super().__init__()
+                self.flush_count = 0
+
+            def flush(self):
+                self.flush_count += 1
+                super().flush()
+
+        output = FlushTrackingStream()
+
+        class FakeFetcher:
+            def __init__(self, _configuration, **kwargs):
+                self.status_callback = kwargs["status_callback"]
+                fetcher_startup_output.append(output.getvalue())
+
+            def fetch_messages(self):
+                self.status_callback("Connecting to Gmail IMAP (imap.gmail.com:993).")
+                self.status_callback("Gmail IMAP login succeeded.")
+                return SimpleNamespace(
+                    stored=0,
+                    duplicates=0,
+                    replies=0,
+                    errors=0,
+                )
+
+        with patch(
+            "core.management.commands.run_worker.MailFetcher",
+            FakeFetcher,
+        ), patch(
+            "core.management.commands.run_worker.process_next_job",
+            return_value=None,
+        ):
+            call_command("run_worker", "--once", stdout=output)
+
+        self.assertIn("Starting MailPrint worker...", output.getvalue())
+        self.assertIn("Worker is running.", output.getvalue())
+        self.assertIn("Connecting to Gmail IMAP", output.getvalue())
+        self.assertIn("Gmail IMAP login succeeded.", output.getvalue())
+        self.assertIn("Gmail poll complete:", output.getvalue())
+        self.assertIn("MailPrint worker stopped.", output.getvalue())
+        self.assertGreater(output.flush_count, 0)
+        self.assertIn("Starting MailPrint worker...", fetcher_startup_output[0])
 
 
 class DashboardViewTests(TestCase):

@@ -101,7 +101,9 @@ their content is not saved. Set `MAILPRINT_MAX_EMAIL_BYTES` and
 `MAILPRINT_MAX_ATTACHMENT_BYTES` in `.env` to adjust the limits.
 The worker also checks Gmail's Sent folder (default `[Gmail]/Sent Mail`) for
 replies to stored emails. Change **IMAP sent folder** in the application
-configuration if your Gmail account uses a different folder name.
+configuration if your Gmail account uses a different folder name. `run_worker`
+prints and flushes progress while connecting, authenticating, and scanning each
+folder; long scans report progress every 100 messages.
 
 ## Filtering rules and auto-print (Stage 5)
 
