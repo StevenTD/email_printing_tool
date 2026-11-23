@@ -105,12 +105,15 @@ class Command(BaseCommand):
                     self.stdout.write(
                         "Gmail poll complete: "
                         f"{summary.stored} stored, {summary.duplicates} duplicates, "
+                        f"{summary.replies} replies synchronized, "
                         f"{summary.errors} errors."
                     )
                     logger.info(
-                        "Gmail poll complete: %s stored, %s duplicates, %s errors.",
+                        "Gmail poll complete: %s stored, %s duplicates, "
+                        "%s replies synchronized, %s errors.",
                         summary.stored,
                         summary.duplicates,
+                        summary.replies,
                         summary.errors,
                     )
 

@@ -68,7 +68,7 @@
           <div class="d-flex gap-2">
             <span class="badge text-bg-secondary">{{ email.get_status_display }}</span>
             {% if email.acknowledged %}
-              <span class="badge text-bg-success">Acknowledged</span>
+              <span class="badge text-bg-success">Replied</span>
             {% endif %}
           </div>
         </div>
@@ -155,7 +155,7 @@
       </section>
 
       <section class="card shadow-sm">
-        <div class="card-header bg-white"><h2 class="h5 mb-0">Acknowledgements</h2></div>
+        <div class="card-header bg-white"><h2 class="h5 mb-0">Replies</h2></div>
         <div class="list-group list-group-flush">
           {% for entry in email.acknowledgements.all %}
             <div class="list-group-item">
@@ -164,12 +164,13 @@
                 {{ entry.get_status_display }}
                 {% if entry.sent_at %} · {{ entry.sent_at|date:"Y-m-d H:i" }}{% endif %}
                 {% if entry.sent_by %} · {{ entry.sent_by.get_username }}{% endif %}
+                {% if entry.source == "gmail" %} · Gmail Sent{% endif %}
               </div>
               {% if entry.error_message %}<div class="small text-danger">{{ entry.error_message }}</div>{% endif %}
-              <details class="mt-2"><summary class="small">Message</summary><pre class="small text-wrap mb-0 mt-2">{{ entry.body }}</pre></details>
+              <pre class="small text-wrap mb-0 mt-2">{{ entry.body }}</pre>
             </div>
           {% empty %}
-            <div class="list-group-item text-body-secondary">No acknowledgement history.</div>
+            <div class="list-group-item text-body-secondary">No replies have been detected.</div>
           {% endfor %}
         </div>
       </section>

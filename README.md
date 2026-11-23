@@ -99,6 +99,9 @@ Worker errors are available in Django admin under **Worker logs**. Attachment
 downloads are capped at 25 MiB by default; oversized files remain listed but
 their content is not saved. Set `MAILPRINT_MAX_EMAIL_BYTES` and
 `MAILPRINT_MAX_ATTACHMENT_BYTES` in `.env` to adjust the limits.
+The worker also checks Gmail's Sent folder (default `[Gmail]/Sent Mail`) for
+replies to stored emails. Change **IMAP sent folder** in the application
+configuration if your Gmail account uses a different folder name.
 
 ## Filtering rules and auto-print (Stage 5)
 
@@ -123,8 +126,10 @@ printing or bypass the schedule.
 Open an email and choose **Send acknowledgement** to select a template, preview
 the rendered message, then send it as a reply in the original Gmail thread.
 Replies include the original `Message-ID` in `In-Reply-To` and preserve the
-message's `References` chain. The first send is available to any signed-in
-operator; a repeat send requires an explicit confirmation.
+message's `References` chain. Replies sent outside MailPrint are also detected
+from Gmail's Sent folder and displayed in the email's **Replies** history and
+the inbox's separate **Reply** indicator. The first send is available to any
+signed-in operator; a repeat send requires an explicit confirmation.
 
 MailPrint Admin users manage templates at `http://127.0.0.1:8000/templates/`. Template
 bodies support `{sender_name}`, `{subject}`, `{date}`, and `{office_name}`.

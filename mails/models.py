@@ -85,10 +85,19 @@ class Acknowledgement(models.Model):
         SENT = "sent", "Sent"
         FAILED = "failed", "Failed"
 
+    class Source(models.TextChoices):
+        MAILPRINT = "mailprint", "MailPrint"
+        GMAIL = "gmail", "Gmail Sent"
+
     email = models.ForeignKey(
         ReceivedEmail,
         on_delete=models.CASCADE,
         related_name="acknowledgements",
+    )
+    source = models.CharField(
+        max_length=10,
+        choices=Source.choices,
+        default=Source.MAILPRINT,
     )
     recipient = models.CharField(max_length=998)
     subject = models.CharField(max_length=998, blank=True)

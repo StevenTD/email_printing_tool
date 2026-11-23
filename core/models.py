@@ -16,6 +16,24 @@ class AppConfiguration(models.Model):
         validators=[MinValueValidator(15)],
     )
     imap_folder = models.CharField(max_length=255, default="INBOX")
+    imap_sent_folder = models.CharField(
+        max_length=255,
+        default="[Gmail]/Sent Mail",
+        blank=True,
+    )
+    imap_sent_sync_folder = models.CharField(
+        max_length=255,
+        blank=True,
+        editable=False,
+    )
+    imap_sent_uidvalidity = models.PositiveBigIntegerField(
+        default=0,
+        editable=False,
+    )
+    imap_sent_last_uid = models.PositiveBigIntegerField(
+        default=0,
+        editable=False,
+    )
     default_action = models.CharField(
         max_length=10,
         choices=DefaultAction.choices,

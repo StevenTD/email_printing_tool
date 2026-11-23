@@ -1,5 +1,6 @@
 import imaplib
 import logging
+import re
 from dataclasses import dataclass
 from email import message_from_bytes
 from email.policy import default
@@ -14,7 +15,7 @@ from django.utils import timezone
 from core.models import WorkerLog
 from rules.processing import process_incoming_email
 
-from .models import EmailAttachment, ReceivedEmail
+from .models import Acknowledgement, EmailAttachment, ReceivedEmail
 
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,7 @@ IMAP_MONTH_NAMES = (
     "Nov",
     "Dec",
 )
+MESSAGE_ID_PATTERN = re.compile(r"<[^<>\s]+>")
 
 
 @dataclass
@@ -69,6 +71,7 @@ class FetchSummary:
     discovered: int = 0
     stored: int = 0
     duplicates: int = 0
+    replies: int = 0
     errors: int = 0
 
 
@@ -286,6 +289,9 @@ class MailFetcher:
                 self.configuration.imap_email,
                 self.configuration.get_imap_app_password(),
             ), "Gmail login")
+            summary.replies, reply_errors = self._fetch_sent_replies(connection)
+            summary.errors += reply_errors
+
             folder = self.configuration.imap_folder
             self._require_ok(connection.select(_quote_mailbox(folder)), f"Select folder {folder!r}")
             uidvalidity = _uid_validity(connection)
@@ -345,6 +351,115 @@ class MailFetcher:
                 connection.logout()
             except (imaplib.IMAP4.error, OSError):
                 logger.warning("IMAP logout failed", exc_info=True)
+
+    def _fetch_sent_replies(self, connection):
+        folder = self.configuration.imap_sent_folder.strip()
+        if not folder:
+            return 0, 0
+
+        status, data = connection.select(_quote_mailbox(folder))
+        if status != "OK":
+            detail = data[0] if data else "no server detail"
+            _log(
+                WorkerLog.Level.ERROR,
+                f"Could not select Gmail Sent folder {folder!r}: {detail!r}",
+            )
+            return 0, 1
+
+        uidvalidity = _uid_validity(connection)
+        same_mailbox = (
+            self.configuration.imap_sent_sync_folder == folder
+            and self.configuration.imap_sent_uidvalidity == uidvalidity
+        )
+        last_uid = self.configuration.imap_sent_last_uid if same_mailbox else 0
+        search_criteria = (
+            ["UID", f"{last_uid + 1}:*"] if last_uid else ["ALL"]
+        )
+        result = connection.uid("SEARCH", None, *search_criteria)
+        if result[0] != "OK":
+            detail = result[1][0] if result[1] else "no server detail"
+            _log(
+                WorkerLog.Level.ERROR,
+                f"Could not search Gmail Sent folder {folder!r}: {detail!r}",
+            )
+            return 0, 1
+
+        uids = result[1][0].split() if result[1] and result[1][0] else []
+        latest_uid = last_uid
+        reply_count = 0
+        error_count = 0
+        for uid_bytes in uids:
+            uid = int(uid_bytes)
+            latest_uid = max(latest_uid, uid)
+            try:
+                raw_message = self._fetch_raw_message(connection, uid)
+                if self._record_sent_reply(raw_message):
+                    reply_count += 1
+            except imaplib.IMAP4.abort:
+                raise
+            except Exception as exc:
+                error_count += 1
+                _log(
+                    WorkerLog.Level.ERROR,
+                    f"Gmail Sent UID {uid}: {exc}",
+                )
+
+        if not error_count:
+            self.configuration.imap_sent_sync_folder = folder
+            self.configuration.imap_sent_uidvalidity = uidvalidity
+            self.configuration.imap_sent_last_uid = latest_uid
+            if not self.configuration._state.adding:
+                self.configuration.save(
+                    update_fields=[
+                        "imap_sent_sync_folder",
+                        "imap_sent_uidvalidity",
+                        "imap_sent_last_uid",
+                        "updated_at",
+                    ]
+                )
+        return reply_count, error_count
+
+    def _record_sent_reply(self, raw_message):
+        message = message_from_bytes(raw_message, policy=default)
+        message_id = str(message.get("Message-ID", "")).strip()
+        if not message_id:
+            _log(
+                WorkerLog.Level.WARNING,
+                "Skipped a Gmail Sent message without a Message-ID.",
+            )
+            return False
+
+        parent_message_ids = []
+        for header in ("In-Reply-To", "References"):
+            for value in message.get_all(header, []):
+                parent_message_ids.extend(reversed(MESSAGE_ID_PATTERN.findall(str(value))))
+        email = None
+        for parent_message_id in dict.fromkeys(parent_message_ids):
+            email = ReceivedEmail.objects.filter(
+                imap_folder=self.configuration.imap_folder,
+                message_id__iexact=parent_message_id,
+            ).first()
+            if email is not None:
+                break
+        if email is None or email.acknowledgements.filter(message_id=message_id).exists():
+            return False
+
+        body_text, body_html, _, _ = _extract_message_content(message)
+        recipients = _message_header_recipients(message, "To")
+        Acknowledgement.objects.create(
+            email=email,
+            source=Acknowledgement.Source.GMAIL,
+            recipient=", ".join(recipients) or "Unknown recipient",
+            subject=str(message.get("Subject", "")),
+            body=body_text or body_html,
+            message_id=message_id,
+            status=Acknowledgement.Status.SENT,
+            sent_at=_message_datetime(message),
+        )
+        email.acknowledged = True
+        email.acknowledged_at = _message_datetime(message) or timezone.now()
+        email.save(update_fields=["acknowledged", "acknowledged_at"])
+        return True
 
     @staticmethod
     def _require_ok(result, operation):

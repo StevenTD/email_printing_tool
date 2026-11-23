@@ -177,6 +177,100 @@ class MailStorageTests(TestCase):
 
 
 class MailFetcherTests(TestCase):
+    def test_imports_manual_gmail_reply_and_advances_sent_cursor(self):
+        email = ReceivedEmail.objects.create(
+            message_id="<original@example.test>",
+            imap_folder="INBOX",
+            imap_uidvalidity=987,
+            imap_uid=501,
+            subject="Original message",
+        )
+        reply = EmailMessage()
+        reply["Message-ID"] = "<manual-reply@example.test>"
+        reply["In-Reply-To"] = email.message_id
+        reply["From"] = "mailbox@example.test"
+        reply["To"] = "sender@example.test"
+        reply["Subject"] = "Re: Original message"
+        reply["Date"] = "Wed, 12 Mar 2025 09:30:00 +0000"
+        reply.set_content("I have received your email.")
+        raw_reply = reply.as_bytes()
+
+        class FakeIMAP:
+            def __init__(self):
+                self.folder = ""
+                self.calls = []
+
+            def login(self, username, password):
+                return "OK", [b"logged in"]
+
+            def select(self, folder):
+                self.folder = folder
+                return "OK", [b"1"]
+
+            def response(self, name):
+                return name, [b"987"]
+
+            def uid(self, command, *args):
+                self.calls.append((self.folder, command, *args))
+                if command == "SEARCH" and self.folder == '"INBOX"':
+                    return "OK", [b""]
+                if command == "SEARCH":
+                    if args[1:] == ("ALL",):
+                        return "OK", [b"91"]
+                    return "OK", [b""]
+                if command == "FETCH":
+                    return "OK", [(b"91 (BODY[])", raw_reply), b")"]
+                raise AssertionError(f"Unexpected IMAP command: {command}")
+
+            def logout(self):
+                return "BYE", [b"logged out"]
+
+        fake_imap = FakeIMAP()
+        configuration = AppConfiguration.objects.create(
+            imap_email="mailbox@example.test",
+            imap_folder="INBOX",
+        )
+        with patch.object(
+            AppConfiguration,
+            "get_imap_app_password",
+            return_value="app-password",
+        ):
+            summary = MailFetcher(
+                configuration,
+                connection_factory=lambda *args, **kwargs: fake_imap,
+            ).fetch_messages()
+            second_summary = MailFetcher(
+                configuration,
+                connection_factory=lambda *args, **kwargs: fake_imap,
+            ).fetch_messages()
+
+        email.refresh_from_db()
+        imported_reply = email.acknowledgements.get()
+        configuration.refresh_from_db()
+        self.assertEqual(summary.replies, 1)
+        self.assertEqual(imported_reply.source, Acknowledgement.Source.GMAIL)
+        self.assertEqual(imported_reply.status, Acknowledgement.Status.SENT)
+        self.assertEqual(imported_reply.body.strip(), "I have received your email.")
+        self.assertTrue(email.acknowledged)
+        self.assertEqual(configuration.imap_sent_last_uid, 91)
+        self.assertEqual(second_summary.replies, 0)
+        self.assertEqual(email.acknowledgements.count(), 1)
+        self.assertIn(
+            ('"[Gmail]/Sent Mail"', "SEARCH", None, "ALL"),
+            fake_imap.calls,
+        )
+        sent_search_index = fake_imap.calls.index(
+            ('"[Gmail]/Sent Mail"', "SEARCH", None, "ALL")
+        )
+        inbox_search_index = fake_imap.calls.index(
+            ('"INBOX"', "SEARCH", None, "UNSEEN")
+        )
+        self.assertLess(sent_search_index, inbox_search_index)
+        self.assertIn(
+            ('"[Gmail]/Sent Mail"', "SEARCH", None, "UID", "92:*"),
+            fake_imap.calls,
+        )
+
     def test_searches_unseen_peeks_at_content_and_marks_stored_message_seen(self):
         raw_message = make_raw_message()
 
@@ -427,6 +521,23 @@ class MailInboxViewTests(TestCase):
         self.assertNotContains(response, "<script>")
         self.assertNotContains(response, "onclick")
         self.assertNotContains(response, "invalid.test")
+
+    def test_email_detail_displays_sent_reply_body(self):
+        Acknowledgement.objects.create(
+            email=self.email,
+            source=Acknowledgement.Source.GMAIL,
+            recipient="sender@example.test",
+            subject="Re: Quarterly report",
+            body="I have received your email.",
+            message_id="<reply@example.test>",
+            status=Acknowledgement.Status.SENT,
+        )
+
+        response = self.client.get(reverse("mails:detail", args=[self.email.pk]))
+
+        self.assertContains(response, "Replies")
+        self.assertContains(response, "Gmail Sent")
+        self.assertContains(response, "I have received your email.")
 
     def test_print_action_queues_job(self):
         response = self.client.post(
