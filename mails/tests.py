@@ -554,10 +554,42 @@ class MailInboxViewTests(TestCase):
         response = self.client.get(reverse("mails:detail", args=[self.email.pk]))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "<p>Hello</p>", html=True)
+        self.assertIn("<p>Hello</p>", response.context["email_body_srcdoc"])
+        self.assertContains(response, 'sandbox=""')
+        self.assertIn("script-src 'none'", response.context["email_body_srcdoc"])
         self.assertNotContains(response, "<script>")
         self.assertNotContains(response, "onclick")
         self.assertNotContains(response, "invalid.test")
+
+    def test_email_detail_preserves_html_css_and_renders_html_in_plain_text(self):
+        self.email.body_html = (
+            "<html><head><style>.notice { color: #123456; }</style></head>"
+            '<body><p class="notice" style="font-weight: bold">Formatted message</p>'
+            "<script>unsafe()</script></body></html>"
+        )
+        self.email.body_text = ""
+        self.email.save(update_fields=["body_html", "body_text"])
+
+        response = self.client.get(reverse("mails:detail", args=[self.email.pk]))
+        srcdoc = response.context["email_body_srcdoc"]
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("<style>.notice { color: #123456; }</style>", srcdoc)
+        self.assertIn('class="notice"', srcdoc)
+        self.assertIn('style="font-weight: bold;"', srcdoc)
+        self.assertIn("Formatted message", srcdoc)
+        self.assertNotIn("<script>", srcdoc)
+
+        self.email.body_html = ""
+        self.email.body_text = "<p><strong>Rendered from text</strong></p>"
+        self.email.save(update_fields=["body_html", "body_text"])
+        text_html_response = self.client.get(
+            reverse("mails:detail", args=[self.email.pk])
+        )
+        self.assertIn(
+            "<p><strong>Rendered from text</strong></p>",
+            text_html_response.context["email_body_srcdoc"],
+        )
 
     def test_email_detail_displays_sent_reply_body(self):
         Acknowledgement.objects.create(

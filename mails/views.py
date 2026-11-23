@@ -25,7 +25,7 @@ from .acknowledgements import (
 )
 from .forms import AcknowledgementSendForm
 from .models import Acknowledgement, EmailAttachment, ReceivedEmail
-from .rendering import sanitize_email_html
+from .rendering import build_email_display_document, sanitize_email_html
 
 
 PAGE_SIZE = 25
@@ -120,7 +120,10 @@ def email_detail(request, email_id):
         "mails/detail.html",
         {
             "email": email,
-            "safe_body_html": sanitize_email_html(email.body_html),
+            "email_body_srcdoc": build_email_display_document(
+                email.body_html,
+                email.body_text,
+            ),
             "has_sent_replies": any(
                 reply.status == Acknowledgement.Status.SENT
                 for reply in replies
