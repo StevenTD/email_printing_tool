@@ -6,7 +6,7 @@ from django.core.exceptions import PermissionDenied
 from django.core import signing
 from django.core.files.storage import default_storage
 from django.core.paginator import Paginator
-from django.db.models import Q
+from django.db.models import Exists, OuterRef, Q
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -24,7 +24,7 @@ from .acknowledgements import (
     send_acknowledgement,
 )
 from .forms import AcknowledgementSendForm
-from .models import EmailAttachment, ReceivedEmail
+from .models import Acknowledgement, EmailAttachment, ReceivedEmail
 from .rendering import sanitize_email_html
 
 
@@ -33,7 +33,14 @@ ACKNOWLEDGEMENT_PREVIEW_SALT = "mails.acknowledgement-preview"
 
 
 def _filtered_emails(request):
-    emails = ReceivedEmail.objects.prefetch_related("attachments")
+    emails = ReceivedEmail.objects.prefetch_related("attachments").annotate(
+        has_reply=Exists(
+            Acknowledgement.objects.filter(
+                email_id=OuterRef("pk"),
+                status=Acknowledgement.Status.SENT,
+            )
+        )
+    )
     status = request.GET.get("status", "")
     valid_statuses = {value for value, _ in ReceivedEmail.Status.choices}
     if status in valid_statuses:
@@ -52,6 +59,12 @@ def _filtered_emails(request):
         emails = emails.filter(attachments__isnull=False).distinct()
     elif has_attachment == "no":
         emails = emails.filter(attachments__isnull=True)
+
+    reply_status = request.GET.get("reply_status", "")
+    if reply_status == "replied":
+        emails = emails.filter(Q(acknowledged=True) | Q(has_reply=True))
+    elif reply_status == "not_replied":
+        emails = emails.filter(acknowledged=False, has_reply=False)
     return emails.order_by("-date_received", "-id")
 
 

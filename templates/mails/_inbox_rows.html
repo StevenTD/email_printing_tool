@@ -15,8 +15,8 @@
       {% else %}
         <span class="badge text-bg-secondary">{{ email.get_status_display }}</span>
       {% endif %}
-      {% if email.acknowledged %}
-        <span class="badge text-bg-info">Acknowledged</span>
+      {% if email.acknowledged or email.has_reply %}
+        <span class="badge text-bg-info">Replied</span>
       {% endif %}
     </td>
     <td class="text-nowrap">{{ email.sender|default:"(unknown sender)" }}</td>

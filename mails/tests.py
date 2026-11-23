@@ -366,6 +366,59 @@ class MailInboxViewTests(TestCase):
         self.assertContains(response, held.subject)
         self.assertNotContains(response, self.email.subject)
 
+    def test_inbox_marks_successfully_replied_emails(self):
+        replied = ReceivedEmail.objects.create(
+            message_id="<replied@example.test>",
+            imap_folder="INBOX",
+            imap_uidvalidity=333,
+            imap_uid=502,
+            subject="Replied email",
+        )
+        failed = ReceivedEmail.objects.create(
+            message_id="<failed-reply@example.test>",
+            imap_folder="INBOX",
+            imap_uidvalidity=333,
+            imap_uid=503,
+            subject="Failed reply",
+        )
+        Acknowledgement.objects.create(
+            email=replied,
+            recipient="sender@example.test",
+            body="Thanks.",
+            status=Acknowledgement.Status.SENT,
+        )
+        Acknowledgement.objects.create(
+            email=failed,
+            recipient="sender@example.test",
+            body="Thanks.",
+            status=Acknowledgement.Status.FAILED,
+        )
+
+        response = self.client.get(reverse("mails:inbox"))
+
+        self.assertEqual(response.status_code, 200)
+        rows = response.content.decode()
+        replied_row = rows.split(f'id="email-row-{replied.pk}"', 1)[1].split("</tr>", 1)[0]
+        failed_row = rows.split(f'id="email-row-{failed.pk}"', 1)[1].split("</tr>", 1)[0]
+        self.assertIn("Replied", replied_row)
+        self.assertNotIn("Replied", failed_row)
+
+        replied_filter = self.client.get(
+            reverse("mails:inbox"),
+            {"reply_status": "replied"},
+        )
+        self.assertContains(replied_filter, replied.subject)
+        self.assertNotContains(replied_filter, failed.subject)
+        self.assertNotContains(replied_filter, self.email.subject)
+
+        not_replied_filter = self.client.get(
+            reverse("mails:inbox"),
+            {"reply_status": "not_replied"},
+        )
+        self.assertContains(not_replied_filter, failed.subject)
+        self.assertContains(not_replied_filter, self.email.subject)
+        self.assertNotContains(not_replied_filter, replied.subject)
+
     def test_email_detail_sanitizes_body_html(self):
         response = self.client.get(reverse("mails:detail", args=[self.email.pk]))
 

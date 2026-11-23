@@ -17,7 +17,7 @@
         <label class="form-label" for="filter-q">Search</label>
         <input id="filter-q" class="form-control" type="search" name="q" value="{{ filters.q }}" placeholder="Sender, subject, or Message-ID">
       </div>
-      <div class="col-6 col-md-3 col-xl-2">
+      <div class="col-6 col-md-2 col-xl-2">
         <label class="form-label" for="filter-status">Status</label>
         <select id="filter-status" class="form-select" name="status">
           <option value="">All statuses</option>
@@ -26,12 +26,20 @@
           {% endfor %}
         </select>
       </div>
-      <div class="col-6 col-md-3 col-xl-2">
+      <div class="col-6 col-md-2 col-xl-2">
         <label class="form-label" for="filter-attachment">Attachments</label>
         <select id="filter-attachment" class="form-select" name="has_attachment">
           <option value="">Any</option>
           <option value="yes" {% if filters.has_attachment == "yes" %}selected{% endif %}>Has attachment</option>
           <option value="no" {% if filters.has_attachment == "no" %}selected{% endif %}>No attachment</option>
+        </select>
+      </div>
+      <div class="col-6 col-md-2 col-xl-2">
+        <label class="form-label" for="filter-reply">Reply</label>
+        <select id="filter-reply" class="form-select" name="reply_status">
+          <option value="">Any</option>
+          <option value="replied" {% if filters.reply_status == "replied" %}selected{% endif %}>Replied</option>
+          <option value="not_replied" {% if filters.reply_status == "not_replied" %}selected{% endif %}>Not replied</option>
         </select>
       </div>
       <div class="col-12 col-md-1">
@@ -84,10 +92,10 @@
     </span>
     <div class="btn-group">
       {% if page_obj.has_previous %}
-        <a class="btn btn-outline-secondary btn-sm" href="?q={{ filters.q|urlencode }}&status={{ filters.status|urlencode }}&has_attachment={{ filters.has_attachment|urlencode }}&page={{ page_obj.previous_page_number }}">Previous</a>
+        <a class="btn btn-outline-secondary btn-sm" href="?q={{ filters.q|urlencode }}&status={{ filters.status|urlencode }}&has_attachment={{ filters.has_attachment|urlencode }}&reply_status={{ filters.reply_status|urlencode }}&page={{ page_obj.previous_page_number }}">Previous</a>
       {% endif %}
       {% if page_obj.has_next %}
-        <a class="btn btn-outline-secondary btn-sm" href="?q={{ filters.q|urlencode }}&status={{ filters.status|urlencode }}&has_attachment={{ filters.has_attachment|urlencode }}&page={{ page_obj.next_page_number }}">Next</a>
+        <a class="btn btn-outline-secondary btn-sm" href="?q={{ filters.q|urlencode }}&status={{ filters.status|urlencode }}&has_attachment={{ filters.has_attachment|urlencode }}&reply_status={{ filters.reply_status|urlencode }}&page={{ page_obj.next_page_number }}">Next</a>
       {% endif %}
     </div>
   </nav>
