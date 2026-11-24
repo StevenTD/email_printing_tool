@@ -4,19 +4,25 @@
 
 {% block extra_head %}
 <style>
+  .email-actions {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 12rem), 1fr));
+  }
   .email-action-button {
     display: inline-flex;
-    width: 180px;
-    height: 38px;
+    width: 100%;
+    min-height: 38px;
     align-items: center;
     justify-content: center;
+    white-space: normal;
   }
   .email-action-form {
     display: flex;
     flex-direction: column;
-    align-items: flex-start;
+    align-items: stretch;
     gap: .35rem;
     margin: 0;
+    min-width: 0;
   }
   .email-message {
     padding: 1.25rem 1.5rem;
@@ -115,13 +121,13 @@
 
 {% block content %}
 <div class="mx-auto" style="max-width: 1500px">
-  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
-    <div>
+  <div class="mb-3">
+    <div class="mb-3">
       <a href="{% url 'mails:inbox' %}" class="link-secondary text-decoration-none">← Inbox</a>
       <h1 class="h2 mt-2 mb-1">{{ email.subject|default:"(no subject)" }}</h1>
       <div class="text-body-secondary">{{ email.sender|default:"(unknown sender)" }}</div>
     </div>
-    <div class="d-flex flex-wrap align-items-start gap-2 email-actions">
+    <div class="gap-2 email-actions">
       <a class="btn btn-outline-primary email-action-button" href="{% url 'mails:acknowledgement' email.pk %}">
         Send acknowledgement
       </a>
