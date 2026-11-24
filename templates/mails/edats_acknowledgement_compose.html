@@ -27,16 +27,79 @@
     </p>
   </div>
 
+  <section class="card shadow-sm mb-3" aria-labelledby="edats-search-heading">
+    <div class="card-header bg-white">
+      <h2 class="h5 mb-0" id="edats-search-heading">Find an EDATS tracking number</h2>
+    </div>
+    <div class="card-body">
+      <form method="get" action="{% url 'mails:edats_acknowledgement' email.pk %}" class="row g-2">
+        <div class="col">
+          <label class="visually-hidden" for="edats-search-input">Search EDATS documents</label>
+          <input
+            class="form-control"
+            id="edats-search-input"
+            type="search"
+            name="search"
+            value="{{ search_input }}"
+            maxlength="250"
+            placeholder="Search by subject, sender, or tracking number">
+        </div>
+        <div class="col-auto">
+          <button class="btn btn-outline-primary" type="submit">Search EDATS</button>
+        </div>
+      </form>
+      <div class="form-text mt-2">Search results are limited to five documents per page.</div>
+
+      {% if search_results %}
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-3">
+          <p class="small text-body-secondary mb-0">
+            {{ search_results.count }} result{{ search_results.count|pluralize }} ·
+            Page {{ search_results.page }}{% if search_results.page_count %} of {{ search_results.page_count }}{% endif %}
+          </p>
+          <nav class="d-flex gap-2" aria-label="EDATS search pages">
+            {% if previous_search_url %}<a class="btn btn-sm btn-outline-secondary" href="{{ previous_search_url }}">Previous</a>{% endif %}
+            {% if next_search_url %}<a class="btn btn-sm btn-outline-secondary" href="{{ next_search_url }}">Next</a>{% endif %}
+          </nav>
+        </div>
+        <div class="list-group mt-2">
+          {% for result in search_results.results %}
+            <article class="list-group-item">
+              <div class="d-flex flex-wrap justify-content-between align-items-start gap-2">
+                <div class="min-w-0">
+                  <div class="fw-semibold text-break">{{ result.subject|default:"(no subject)" }}</div>
+                  <div class="small text-body-secondary text-break">{{ result.tracking_number }}</div>
+                </div>
+                <a class="btn btn-sm btn-outline-success flex-shrink-0" href="{{ result.select_url }}">Use this number</a>
+              </div>
+              <dl class="row small mt-2 mb-0">
+                <dt class="col-sm-3">Sender</dt><dd class="col-sm-9 text-break">{{ result.sender }}</dd>
+                <dt class="col-sm-3">Receiver</dt><dd class="col-sm-9 text-break">{{ result.receiver }}</dd>
+                <dt class="col-sm-3">Date created</dt><dd class="col-sm-9">{{ result.created_at }}</dd>
+              </dl>
+            </article>
+          {% empty %}
+            <div class="list-group-item text-body-secondary">No EDATS documents matched that search.</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    </div>
+  </section>
+
   <form method="post" class="card card-body shadow-sm">
     {% csrf_token %}
+    <input type="hidden" name="edats_search" value="{{ search_query }}">
+    <input type="hidden" name="edats_search_page" value="{{ search_page }}">
     {% if form.non_field_errors %}
       <div class="alert alert-danger">{{ form.non_field_errors }}</div>
     {% endif %}
     <div class="mb-3">
-      <label class="form-label" for="{{ form.tracking_number.id_for_label }}">{{ form.tracking_number.label }}</label>
-      {{ form.tracking_number }}
+      <div id="tracking-number-field">
+        <label class="form-label" for="{{ form.tracking_number.id_for_label }}">{{ form.tracking_number.label }}</label>
+        {{ form.tracking_number }}
+      </div>
       {% for error in form.tracking_number.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}
       <div class="form-text">The number is checked with EDATS and saved to this email. Subject differences are shown as a warning, but do not prevent you from continuing.</div>
+      {% if selected_from_search %}<div class="small text-success mt-1">Selected EDATS result. Verify it to link it to this email.</div>{% endif %}
     </div>
     <div class="mb-3">
       <label class="form-label" for="{{ form.template.id_for_label }}">{{ form.template.label }}</label>

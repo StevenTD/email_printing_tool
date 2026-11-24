@@ -24,6 +24,10 @@ EDATS_API_BASE_URL = config(
     default="https://tracking.penroaklan.com.ph/api/e_dats",
 ).rstrip("/")
 EDATS_API_TOKEN = config("EDATS_API_TOKEN", default="")
+EDATS_DOCUMENT_SEARCH_URL = config(
+    "EDATS_DOCUMENT_SEARCH_URL",
+    default="https://irs.penroaklan.com.ph/api/e_dats/document-paginated",
+).rstrip("/")
 EDATS_PUBLIC_TRACKING_URL = config(
     "EDATS_PUBLIC_TRACKING_URL",
     default="https://tracking.penroaklan.com.ph",

@@ -159,6 +159,7 @@ Configure the backend credentials in `.env`:
 ```text
 EDATS_API_BASE_URL=https://tracking.penroaklan.com.ph/api/e_dats
 EDATS_API_TOKEN=your-user-token
+EDATS_DOCUMENT_SEARCH_URL=https://irs.penroaklan.com.ph/api/e_dats/document-paginated
 EDATS_PUBLIC_TRACKING_URL=https://tracking.penroaklan.com.ph
 ```
 
@@ -166,6 +167,9 @@ The token must belong to an EDATS user allowed to view the relevant documents.
 Keep `.env` private and restart MailPrint after changing it. MailPrint calls the
 token-authenticated `document/tracking/<tracking_number>` endpoint and uses the
 EDATS document's sender to build the public tracking link.
+The EDATS acknowledgement page can also search documents by subject, sender, or
+tracking number. Search results are fetched five at a time and display the
+sender, receiver fields, and creation date before a tracking number is selected.
 
 MailPrint Admin users can manage the separate EDATS message templates alongside
 the existing templates at `/templates/`. EDATS templates have editable plain-text

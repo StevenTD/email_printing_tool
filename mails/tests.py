@@ -3,6 +3,7 @@ import tempfile
 from datetime import date, datetime, timezone
 from email.message import EmailMessage
 from io import BytesIO
+from urllib.parse import parse_qs, urlsplit
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -21,7 +22,12 @@ from .acknowledgements import (
     send_acknowledgement,
 )
 from .fetcher import MailFetcher, store_message
-from .edats import EdatsLookupError, fetch_edats_document, subjects_match
+from .edats import (
+    EdatsLookupError,
+    fetch_edats_document,
+    search_edats_documents,
+    subjects_match,
+)
 from .models import Acknowledgement, EmailAttachment, ReceivedEmail
 from rules.models import AcknowledgementTemplate
 from printing.models import PrintJob, PrintLog
@@ -1072,6 +1078,51 @@ class EdatsAcknowledgementTests(TestCase):
             ):
                 fetch_edats_document("P.AKLAN2026-10184")
 
+    @override_settings(
+        EDATS_API_TOKEN="test-token",
+        EDATS_DOCUMENT_SEARCH_URL=(
+            "https://irs.penroaklan.com.ph/api/e_dats/document-paginated"
+        ),
+    )
+    def test_search_uses_five_item_pages_and_formats_receiver_and_date(self):
+        response = BytesIO(
+            json.dumps(
+                {
+                    "count": 11,
+                    "next": "https://irs.penroaklan.com.ph/api/e_dats/document-paginated?page=3",
+                    "previous": "https://irs.penroaklan.com.ph/api/e_dats/document-paginated?page=1",
+                    "results": [
+                        {
+                            "tracking_number": "P.AKLAN2026-10184",
+                            "subject": "Quarterly report",
+                            "sender": "ICT/Records Unit",
+                            "to_department": 7,
+                            "to_user": 21,
+                            "created_at": "2026-11-24T10:00:00Z",
+                        }
+                    ],
+                }
+            ).encode("utf-8")
+        )
+        with patch("mails.edats.urlopen", return_value=response) as urlopen_mock:
+            results = search_edats_documents("Quarterly report", page=2)
+
+        request = urlopen_mock.call_args.args[0]
+        query = parse_qs(urlsplit(request.full_url).query)
+        self.assertEqual(query["page"], ["2"])
+        self.assertEqual(query["page_size"], ["5"])
+        self.assertEqual(query["search"], ["Quarterly report"])
+        self.assertEqual(request.get_header("Authorization"), "Token test-token")
+        self.assertEqual(results["page_size"], 5)
+        self.assertTrue(results["has_next"])
+        self.assertTrue(results["has_previous"])
+        self.assertEqual(
+            results["results"][0]["receiver"],
+            "Department ID 7 · User ID 21",
+        )
+        self.assertEqual(results["results"][0]["sender"], "ICT/Records Unit")
+        self.assertIn("Nov 24, 2026", results["results"][0]["created_at"])
+
     def test_subject_comparison_ignores_case_and_extra_whitespace(self):
         self.assertTrue(subjects_match("  QUARTERLY\n report ", "Quarterly report"))
         self.assertFalse(subjects_match("Quarterly report revised", "Quarterly report"))
@@ -1152,6 +1203,55 @@ class EdatsAcknowledgementTests(TestCase):
         self.assertContains(
             response,
             reverse("mails:edats_acknowledgement", args=[self.email.pk]),
+        )
+
+    @patch("mails.views.search_edats_documents")
+    def test_search_page_displays_results_and_selection_prefills_number(self, search):
+        search.return_value = {
+            "count": 6,
+            "page": 1,
+            "page_size": 5,
+            "page_count": 2,
+            "has_next": True,
+            "has_previous": False,
+            "results": [
+                {
+                    "tracking_number": "P.AKLAN2026-10184",
+                    "subject": "Quarterly report",
+                    "sender": "ICT/Records Unit",
+                    "receiver": "Department ID 7",
+                    "created_at": "Nov 24, 2026, 06:00 PM",
+                }
+            ],
+        }
+        url = reverse("mails:edats_acknowledgement", args=[self.email.pk])
+
+        response = self.client.get(
+            url,
+            {"search": "Quarterly report", "page": "1"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        search.assert_called_once_with("Quarterly report", page=1)
+        self.assertContains(response, "ICT/Records Unit")
+        self.assertContains(response, "Department ID 7")
+        self.assertContains(response, "Nov 24, 2026, 06:00 PM")
+        self.assertContains(response, "Next")
+        select_url = response.context["search_results"]["results"][0]["select_url"]
+
+        self.assertIn("tracking_number=P.AKLAN2026-10184", select_url)
+        selected = self.client.get(
+            url,
+            {
+                "search": "Quarterly report",
+                "page": "1",
+                "tracking_number": "P.AKLAN2026-10184",
+            },
+        )
+
+        self.assertEqual(
+            selected.context["form"]["tracking_number"].value(),
+            "P.AKLAN2026-10184",
         )
 
     @patch("mails.views.fetch_edats_document")

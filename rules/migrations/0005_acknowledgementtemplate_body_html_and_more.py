@@ -19,7 +19,7 @@ or by clicking the link below:
 Thank you.
 
 Best regards,
-PENRO Aklan - Records Unit"""
+PENRO Aklan - ICT Unit"""
 TRACKING_TEMPLATE_HTML = """<div style="max-width:640px;margin:0 auto;padding:24px;font-family:Arial,Helvetica,sans-serif;color:#243247;line-height:1.6;border:1px solid #dbe3ec;border-radius:10px">
 <p style="font-size:16px;margin:0 0 16px">Good day!</p>
 <p style="margin:0 0 18px">Your request has been recorded in our Document Tracking System with the following details:</p>
@@ -31,7 +31,7 @@ TRACKING_TEMPLATE_HTML = """<div style="max-width:640px;margin:0 auto;padding:24
 <p style="margin:0 0 20px">or by clicking the button below:</p>
 <p style="margin:0 0 24px"><a href="{tracking_url}" style="display:inline-block;padding:11px 18px;background:#1457a6;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:bold">Track this document</a></p>
 <p style="margin:0 0 16px">Thank you.</p>
-<p style="margin:0">Best regards,<br><strong>PENRO Aklan - Records Unit</strong></p>
+<p style="margin:0">Best regards,<br><strong>PENRO Aklan - ICT Unit</strong></p>
 </div>"""
 
 

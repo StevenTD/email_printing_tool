@@ -2,6 +2,7 @@ import hashlib
 import shutil
 import tempfile
 from io import BytesIO
+from urllib.parse import urlencode
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -35,6 +36,7 @@ from .edats import (
     EdatsLookupError,
     build_public_tracking_url,
     fetch_edats_document,
+    search_edats_documents,
     subjects_match,
 )
 from .forms import AcknowledgementSendForm, EdatsAcknowledgementSendForm
@@ -309,13 +311,32 @@ def _edats_preview_matches(token, email, template, tracking_number, body, body_h
     return payload == expected
 
 
+def _edats_search_page_url(search_query, page, tracking_number=""):
+    params = {"search": search_query, "page": page}
+    if tracking_number:
+        params["tracking_number"] = tracking_number
+    return f"?{urlencode(params)}"
+
+
 @login_required
 def edats_acknowledgement_compose(request, email_id):
     require_mailprint_operator(request.user)
     email = get_object_or_404(ReceivedEmail, pk=email_id)
+    if request.method == "POST":
+        search_query = request.POST.get("edats_search", "").strip()
+        search_page_value = request.POST.get("edats_search_page", "1")
+        selected_tracking_number = ""
+    else:
+        search_query = request.GET.get("search", "").strip()
+        search_page_value = request.GET.get("page", "1")
+        selected_tracking_number = request.GET.get("tracking_number", "").strip()
     form = EdatsAcknowledgementSendForm(
         request.POST or None,
-        initial={"tracking_number": email.edats_tracking_number},
+        initial={
+            "tracking_number": (
+                selected_tracking_number or email.edats_tracking_number
+            )
+        },
     )
     previewed = False
     preview_body = ""
@@ -325,6 +346,51 @@ def edats_acknowledgement_compose(request, email_id):
     preview_token = ""
     edats_document = None
     duplicate_confirmation_required = False
+    search_page = 1
+    search_results = None
+    previous_search_url = ""
+    next_search_url = ""
+
+    if search_query:
+        try:
+            search_page = int(search_page_value)
+            if search_page < 1:
+                raise ValueError
+        except (TypeError, ValueError):
+            messages.warning(request, "Invalid EDATS search page; showing page 1.")
+            search_page = 1
+
+        try:
+            search_results = search_edats_documents(
+                search_query,
+                page=search_page,
+            )
+            for result in search_results["results"]:
+                result["select_url"] = _edats_search_page_url(
+                    search_query,
+                    search_page,
+                    result["tracking_number"],
+                ) + "#tracking-number-field"
+
+            page_tracking_number = (
+                selected_tracking_number
+                if request.method == "GET"
+                else request.POST.get("tracking_number", "").strip()
+            )
+            if search_results["has_previous"]:
+                previous_search_url = _edats_search_page_url(
+                    search_query,
+                    search_page - 1,
+                    page_tracking_number,
+                )
+            if search_results["has_next"]:
+                next_search_url = _edats_search_page_url(
+                    search_query,
+                    search_page + 1,
+                    page_tracking_number,
+                )
+        except EdatsLookupError as exc:
+            messages.error(request, str(exc))
 
     if request.method == "POST" and form.is_valid():
         template = form.cleaned_data["template"]
@@ -483,6 +549,13 @@ def edats_acknowledgement_compose(request, email_id):
                 and subjects_match(email.subject, edats_document["subject"])
             ),
             "duplicate_confirmation_required": duplicate_confirmation_required,
+            "search_query": search_query,
+            "search_input": search_query or email.subject,
+            "search_page": search_page,
+            "search_results": search_results,
+            "previous_search_url": previous_search_url,
+            "next_search_url": next_search_url,
+            "selected_from_search": bool(selected_tracking_number),
         },
     )
 
