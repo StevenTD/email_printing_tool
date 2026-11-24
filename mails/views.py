@@ -31,13 +31,20 @@ from .acknowledgements import (
     build_reply_message,
     send_acknowledgement,
 )
-from .forms import AcknowledgementSendForm
+from .edats import (
+    EdatsLookupError,
+    build_public_tracking_url,
+    fetch_edats_document,
+    subjects_match,
+)
+from .forms import AcknowledgementSendForm, EdatsAcknowledgementSendForm
 from .models import Acknowledgement, EmailAttachment, ReceivedEmail
 from .rendering import build_email_display_document, sanitize_email_html
 
 
 PAGE_SIZE = 25
 ACKNOWLEDGEMENT_PREVIEW_SALT = "mails.acknowledgement-preview"
+EDATS_ACKNOWLEDGEMENT_PREVIEW_SALT = "mails.edats-acknowledgement-preview"
 
 
 def _filtered_emails(request):
@@ -139,6 +146,14 @@ def email_detail(request, email_id):
             "has_printable_attachments": any(
                 attachment.printable and attachment.file
                 for attachment in email.attachments.all()
+            ),
+            "edats_tracking_url": (
+                build_public_tracking_url(
+                    email.edats_tracking_number,
+                    email.edats_sender_name,
+                )
+                if email.edats_tracking_number
+                else ""
             ),
         },
     )
@@ -257,6 +272,216 @@ def acknowledgement_compose(request, email_id):
             "preview_recipient": preview_recipient,
             "preview_subject": preview_subject,
             "preview_token": preview_token,
+            "duplicate_confirmation_required": duplicate_confirmation_required,
+        },
+    )
+
+
+def _edats_preview_token(email, template, tracking_number, body, body_html):
+    return signing.dumps(
+        {
+            "email_id": email.pk,
+            "template_id": template.pk,
+            "tracking_number": tracking_number,
+            "body_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+            "html_sha256": hashlib.sha256(body_html.encode("utf-8")).hexdigest(),
+        },
+        salt=EDATS_ACKNOWLEDGEMENT_PREVIEW_SALT,
+    )
+
+
+def _edats_preview_matches(token, email, template, tracking_number, body, body_html):
+    try:
+        payload = signing.loads(
+            token,
+            salt=EDATS_ACKNOWLEDGEMENT_PREVIEW_SALT,
+            max_age=15 * 60,
+        )
+    except signing.BadSignature:
+        return False
+    expected = {
+        "email_id": email.pk,
+        "template_id": template.pk,
+        "tracking_number": tracking_number,
+        "body_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+        "html_sha256": hashlib.sha256(body_html.encode("utf-8")).hexdigest(),
+    }
+    return payload == expected
+
+
+@login_required
+def edats_acknowledgement_compose(request, email_id):
+    require_mailprint_operator(request.user)
+    email = get_object_or_404(ReceivedEmail, pk=email_id)
+    form = EdatsAcknowledgementSendForm(
+        request.POST or None,
+        initial={"tracking_number": email.edats_tracking_number},
+    )
+    previewed = False
+    preview_body = ""
+    preview_html_srcdoc = ""
+    preview_recipient = ""
+    preview_subject = ""
+    preview_token = ""
+    edats_document = None
+    duplicate_confirmation_required = False
+
+    if request.method == "POST" and form.is_valid():
+        template = form.cleaned_data["template"]
+        tracking_number = form.cleaned_data["tracking_number"].strip()
+        action = request.POST.get("action")
+        if action not in ("verify", "preview", "send"):
+            messages.error(
+                request,
+                "Choose Verify, Preview, or Send acknowledgement.",
+            )
+        else:
+            try:
+                edats_document = fetch_edats_document(tracking_number)
+                subject_matches = subjects_match(
+                    email.subject,
+                    edats_document["subject"],
+                )
+                if not subject_matches:
+                    messages.warning(
+                        request,
+                        "The EDATS subject differs from this email. Review both subjects; you can continue if this is the correct document.",
+                    )
+                if (
+                    email.edats_tracking_number != edats_document["tracking_number"]
+                    or email.edats_sender_name != edats_document["sender"]
+                ):
+                    email.edats_tracking_number = edats_document["tracking_number"]
+                    email.edats_sender_name = edats_document["sender"]
+                    email.save(
+                        update_fields=[
+                            "edats_tracking_number",
+                            "edats_sender_name",
+                        ]
+                    )
+                    AuditLog.objects.create(
+                        user=request.user,
+                        action="email_edats_tracking_linked",
+                        object_type="ReceivedEmail",
+                        object_id=str(email.pk),
+                        details={
+                            "tracking_number": email.edats_tracking_number,
+                            "edats_subject": edats_document["subject"],
+                        },
+                    )
+
+                if action == "verify":
+                    if subject_matches:
+                        messages.success(
+                            request,
+                            f"Verified {tracking_number}; the EDATS subject matches this email.",
+                        )
+                else:
+                    extra_variables = {
+                        "tracking_number": edats_document["tracking_number"],
+                        "tracking_base_url": edats_document["tracking_base_url"],
+                        "tracking_url": edats_document["tracking_url"],
+                        "edats_sender": edats_document["sender"],
+                    }
+                    configuration, _ = AppConfiguration.objects.get_or_create(key=1)
+                    preview_message, preview_recipient, preview_body = build_reply_message(
+                        email,
+                        template,
+                        configuration,
+                        extra_variables=extra_variables,
+                        html_body_template=template.body_html,
+                    )
+                    preview_subject = str(preview_message["Subject"])
+                    preview_html = preview_message.get_body(
+                        preferencelist=("html",)
+                    ).get_content()
+                    preview_html_srcdoc = build_email_display_document(
+                        preview_html,
+                        "",
+                    )
+                    if action == "preview":
+                        previewed = True
+                        preview_token = _edats_preview_token(
+                            email,
+                            template,
+                            tracking_number,
+                            preview_body,
+                            preview_html,
+                        )
+                    else:
+                        preview_token = request.POST.get("preview_token", "")
+                        if not _edats_preview_matches(
+                            preview_token,
+                            email,
+                            template,
+                            tracking_number,
+                            preview_body,
+                            preview_html,
+                        ):
+                            messages.error(
+                                request,
+                                "Preview expired or changed. Review the refreshed preview before sending.",
+                            )
+                            previewed = True
+                            preview_token = _edats_preview_token(
+                                email,
+                                template,
+                                tracking_number,
+                                preview_body,
+                                preview_html,
+                            )
+                        else:
+                            already_sent = email.acknowledgements.filter(
+                                status=Acknowledgement.Status.SENT
+                            ).exists()
+                            if (
+                                already_sent
+                                and not form.cleaned_data["confirm_duplicate"]
+                            ):
+                                previewed = True
+                                duplicate_confirmation_required = True
+                            else:
+                                acknowledgement = send_acknowledgement(
+                                    email,
+                                    template,
+                                    user=request.user,
+                                    confirm_duplicate=form.cleaned_data[
+                                        "confirm_duplicate"
+                                    ],
+                                    extra_variables=extra_variables,
+                                    html_body_template=template.body_html,
+                                )
+                                messages.success(
+                                    request,
+                                    "EDATS acknowledgement sent to "
+                                    f"{acknowledgement.recipient}.",
+                                )
+                                return redirect(
+                                    "mails:detail",
+                                    email_id=email.pk,
+                                )
+            except EdatsLookupError as exc:
+                messages.error(request, str(exc))
+            except (AcknowledgementError, ValueError) as exc:
+                messages.error(request, str(exc))
+
+    return render(
+        request,
+        "mails/edats_acknowledgement_compose.html",
+        {
+            "email": email,
+            "form": form,
+            "previewed": previewed,
+            "preview_body": preview_body,
+            "preview_html_srcdoc": preview_html_srcdoc,
+            "preview_recipient": preview_recipient,
+            "preview_subject": preview_subject,
+            "preview_token": preview_token,
+            "edats_document": edats_document,
+            "edats_subject_matches": bool(
+                edats_document
+                and subjects_match(email.subject, edats_document["subject"])
+            ),
             "duplicate_confirmation_required": duplicate_confirmation_required,
         },
     )

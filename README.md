@@ -144,6 +144,35 @@ IMAP and SMTP. SMTP uses Gmail SSL on port 465. Failed sends are retained in the
 email acknowledgement history and worker error log. Automated tests mock SMTP
 and do not send real email.
 
+### EDATS tracking acknowledgements
+
+On an email detail page, choose **Send EDATS acknowledgement** to look up an
+existing EDATS tracking number, compare its subject with the email, save the
+link to that email, preview the HTML acknowledgement, and send it as a reply in
+the original Gmail thread. MailPrint only reads EDATS documents; it does not
+create or modify records in the EDATS backend. A subject difference is shown as
+a warning, but does not prevent linking or sending; review both subjects before
+continuing.
+
+Configure the backend credentials in `.env`:
+
+```text
+EDATS_API_BASE_URL=https://tracking.penroaklan.com.ph/api/e_dats
+EDATS_API_TOKEN=your-user-token
+EDATS_PUBLIC_TRACKING_URL=https://tracking.penroaklan.com.ph
+```
+
+The token must belong to an EDATS user allowed to view the relevant documents.
+Keep `.env` private and restart MailPrint after changing it. MailPrint calls the
+token-authenticated `document/tracking/<tracking_number>` endpoint and uses the
+EDATS document's sender to build the public tracking link.
+
+MailPrint Admin users can manage the separate EDATS message templates alongside
+the existing templates at `/templates/`. EDATS templates have editable plain-text
+and HTML bodies. They support `{sender_name}`, `{subject}`, `{date}`,
+`{office_name}`, `{tracking_number}`, `{tracking_base_url}`, `{tracking_url}`,
+and `{edats_sender}`. Variable values are escaped when inserted into HTML.
+
 ## Printer management (Stage 7)
 
 MailPrint Admin users can open `http://127.0.0.1:8000/printers/` to refresh Windows

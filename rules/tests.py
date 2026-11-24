@@ -134,6 +134,22 @@ class AcknowledgementTemplateTests(TestCase):
         self.assertFalse(form.is_valid())
         self.assertIn("Unsupported acknowledgement template variable", str(form.errors))
 
+    def test_tracking_template_accepts_inline_css_and_edats_variables(self):
+        form = AcknowledgementTemplateForm(
+            data={
+                "name": "EDATS HTML",
+                "body": "Tracking {tracking_number}",
+                "body_html": (
+                    "<style>.banner { color: #123456; }</style>"
+                    "<p class=\"banner\">{tracking_number}</p>"
+                ),
+                "enabled": "on",
+                "is_tracking_template": "on",
+            }
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+
     def test_saving_new_default_clears_previous_default(self):
         previous = AcknowledgementTemplate.objects.create(
             name="Old default",

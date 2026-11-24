@@ -67,8 +67,10 @@ class FilterRule(models.Model):
 class AcknowledgementTemplate(models.Model):
     name = models.CharField(max_length=150, unique=True)
     body = models.TextField()
+    body_html = models.TextField(blank=True)
     enabled = models.BooleanField(default=True)
     is_default = models.BooleanField(default=False)
+    is_tracking_template = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

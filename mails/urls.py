@@ -20,6 +20,11 @@ urlpatterns = [
         views.acknowledgement_compose,
         name="acknowledgement",
     ),
+    path(
+        "emails/<int:email_id>/edats-acknowledgement/",
+        views.edats_acknowledgement_compose,
+        name="edats_acknowledgement",
+    ),
     path("emails/<int:email_id>/actions/<str:action>/", views.email_action, name="action"),
     path(
         "attachments/<int:attachment_id>/download/",

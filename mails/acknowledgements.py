@@ -1,3 +1,4 @@
+import html
 import re
 import smtplib
 import ssl
@@ -22,6 +23,10 @@ ACKNOWLEDGEMENT_VARIABLES = {
     "subject",
     "date",
     "office_name",
+    "tracking_number",
+    "tracking_base_url",
+    "tracking_url",
+    "edats_sender",
 }
 MESSAGE_ID_PATTERN = re.compile(r"<[^<>\s]+>")
 
@@ -38,7 +43,7 @@ class AcknowledgementSendError(AcknowledgementError):
     pass
 
 
-def render_acknowledgement_body(email, template, configuration):
+def _acknowledgement_variables(email, configuration, extra_variables=None):
     display_name, address = parseaddr(email.sender)
     if not address:
         raise AcknowledgementError("The sender address is missing or invalid.")
@@ -52,10 +57,38 @@ def render_acknowledgement_body(email, template, configuration):
         "subject": email.subject or "(no subject)",
         "date": date,
         "office_name": configuration.office_name,
+        "tracking_number": "",
+        "tracking_base_url": "",
+        "tracking_url": "",
+        "edats_sender": "",
     }
+    if extra_variables:
+        variables.update(extra_variables)
+    return variables
+
+
+def render_acknowledgement_body(email, template, configuration, extra_variables=None):
+    variables = _acknowledgement_variables(
+        email,
+        configuration,
+        extra_variables=extra_variables,
+    )
     validate_acknowledgement_template(template.body)
     formatter = Formatter()
     return formatter.vformat(template.body, (), variables)
+
+
+def render_acknowledgement_html(template_body, variables):
+    validate_acknowledgement_html_template(template_body)
+    safe_variables = {
+        key: html.escape(str(value), quote=True)
+        for key, value in variables.items()
+    }
+    return re.sub(
+        r"\{([A-Za-z_][A-Za-z_0-9]*)\}",
+        lambda match: safe_variables[match.group(1)],
+        template_body,
+    )
 
 
 def validate_acknowledgement_template(body):
@@ -77,7 +110,22 @@ def validate_acknowledgement_template(body):
         raise AcknowledgementError(f"Invalid acknowledgement template: {exc}") from exc
 
 
-def build_reply_message(email, template, configuration):
+def validate_acknowledgement_html_template(body):
+    for field_name in re.findall(r"\{([A-Za-z_][A-Za-z_0-9]*)\}", body):
+        if field_name not in ACKNOWLEDGEMENT_VARIABLES:
+            raise AcknowledgementError(
+                f"Unsupported acknowledgement template variable: {field_name}"
+            )
+
+
+def build_reply_message(
+    email,
+    template,
+    configuration,
+    *,
+    extra_variables=None,
+    html_body_template="",
+):
     _, recipient = parseaddr(email.sender)
     if not recipient or "\r" in recipient or "\n" in recipient:
         raise AcknowledgementError("The sender address is missing or invalid.")
@@ -85,7 +133,13 @@ def build_reply_message(email, template, configuration):
     if not MESSAGE_ID_PATTERN.fullmatch(parent_message_id):
         raise AcknowledgementError("The incoming email has no valid Message-ID to reply to.")
 
-    body = render_acknowledgement_body(email, template, configuration)
+    variables = _acknowledgement_variables(
+        email,
+        configuration,
+        extra_variables=extra_variables,
+    )
+    validate_acknowledgement_template(template.body)
+    body = Formatter().vformat(template.body, (), variables)
     subject = email.subject or "(no subject)"
     reply_subject = subject if subject.casefold().startswith("re:") else f"Re: {subject}"
     references = _thread_references(email, parent_message_id)
@@ -98,6 +152,12 @@ def build_reply_message(email, template, configuration):
     message["In-Reply-To"] = parent_message_id
     message["References"] = " ".join(references)
     message.set_content(body, charset="utf-8")
+    if html_body_template:
+        message.add_alternative(
+            render_acknowledgement_html(html_body_template, variables),
+            subtype="html",
+            charset="utf-8",
+        )
     return message, recipient, body
 
 
@@ -122,11 +182,25 @@ def _thread_references(email, parent_message_id):
     return references
 
 
-def send_acknowledgement(email, template, *, user=None, confirm_duplicate=False):
+def send_acknowledgement(
+    email,
+    template,
+    *,
+    user=None,
+    confirm_duplicate=False,
+    extra_variables=None,
+    html_body_template="",
+):
     if not template.enabled:
         raise AcknowledgementError("This acknowledgement template is disabled.")
     configuration, _ = AppConfiguration.objects.get_or_create(key=1)
-    message, recipient, body = build_reply_message(email, template, configuration)
+    message, recipient, body = build_reply_message(
+        email,
+        template,
+        configuration,
+        extra_variables=extra_variables,
+        html_body_template=html_body_template,
+    )
     subject = str(message["Subject"])
     try:
         with transaction.atomic():
@@ -155,6 +229,11 @@ def send_acknowledgement(email, template, *, user=None, confirm_duplicate=False)
                 sender=str(message["From"]),
                 subject=subject,
                 body=body,
+                body_html=(
+                    message.get_body(preferencelist=("html",)).get_content()
+                    if html_body_template
+                    else ""
+                ),
                 template_name=template.name,
                 message_id=str(message["Message-ID"]),
                 status=Acknowledgement.Status.SENDING,

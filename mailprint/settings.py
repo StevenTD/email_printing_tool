@@ -19,6 +19,15 @@ CSRF_TRUSTED_ORIGINS = config(
     default="",
     cast=Csv(),
 )
+EDATS_API_BASE_URL = config(
+    "EDATS_API_BASE_URL",
+    default="https://tracking.penroaklan.com.ph/api/e_dats",
+).rstrip("/")
+EDATS_API_TOKEN = config("EDATS_API_TOKEN", default="")
+EDATS_PUBLIC_TRACKING_URL = config(
+    "EDATS_PUBLIC_TRACKING_URL",
+    default="https://tracking.penroaklan.com.ph",
+).rstrip("/")
 
 INSTALLED_APPS = [
     "axes",

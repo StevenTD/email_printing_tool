@@ -1,6 +1,8 @@
+import json
 import tempfile
 from datetime import date, datetime, timezone
 from email.message import EmailMessage
+from io import BytesIO
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -19,6 +21,7 @@ from .acknowledgements import (
     send_acknowledgement,
 )
 from .fetcher import MailFetcher, store_message
+from .edats import EdatsLookupError, fetch_edats_document, subjects_match
 from .models import Acknowledgement, EmailAttachment, ReceivedEmail
 from rules.models import AcknowledgementTemplate
 from printing.models import PrintJob, PrintLog
@@ -993,3 +996,208 @@ class AcknowledgementTests(TestCase):
 
         self.assertEqual(second_send.status_code, 302)
         self.assertEqual(Acknowledgement.objects.filter(status="sent").count(), 2)
+
+
+class EdatsAcknowledgementTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="edats-operator",
+            password="test-pass",
+        )
+        operator_group, _ = Group.objects.get_or_create(name=OPERATOR_GROUP_NAME)
+        self.user.groups.add(operator_group)
+        self.client.force_login(self.user)
+        self.email = ReceivedEmail.objects.create(
+            message_id="<edats-email@example.test>",
+            imap_folder="INBOX",
+            imap_uidvalidity=913,
+            imap_uid=1902,
+            sender="Sender Name <sender@example.test>",
+            subject="Quarterly report",
+        )
+        self.template = AcknowledgementTemplate.objects.get(
+            is_tracking_template=True,
+        )
+        self.configuration = AppConfiguration.objects.create(
+            imap_email="mailbox@example.test",
+            office_name="PENRO Aklan",
+        )
+        self.edats_document = {
+            "tracking_number": "P.AKLAN2026-10184",
+            "subject": "Quarterly report",
+            "sender": "ICT/Records Unit",
+            "tracking_base_url": "https://tracking.penroaklan.com.ph",
+            "tracking_url": (
+                "https://tracking.penroaklan.com.ph/track/P.AKLAN2026-10184/"
+                "?sender_name=ICT%2FRecords+Unit"
+            ),
+        }
+
+    @override_settings(EDATS_API_TOKEN="test-token")
+    def test_fetch_edats_document_uses_token_and_returns_tracking_data(self):
+        response = BytesIO(
+            json.dumps(
+                {
+                    "tracking_number": "P.AKLAN2026-10184",
+                    "subject": "Quarterly report",
+                    "sender": "ICT/Records Unit",
+                }
+            ).encode("utf-8")
+        )
+        with patch("mails.edats.urlopen", return_value=response) as urlopen_mock:
+            document = fetch_edats_document("P.AKLAN2026-10184")
+
+        request = urlopen_mock.call_args.args[0]
+        self.assertEqual(request.get_header("Authorization"), "Token test-token")
+        self.assertTrue(
+            request.full_url.endswith(
+                "/document/tracking/P.AKLAN2026-10184"
+            )
+        )
+        self.assertEqual(document["sender"], "ICT/Records Unit")
+        self.assertEqual(
+            document["tracking_base_url"],
+            "https://tracking.penroaklan.com.ph",
+        )
+        self.assertEqual(
+            document["tracking_url"],
+            self.edats_document["tracking_url"],
+        )
+
+    def test_edats_lookup_requires_token_configuration(self):
+        with override_settings(EDATS_API_TOKEN=""):
+            with self.assertRaisesMessage(
+                EdatsLookupError,
+                "EDATS_API_TOKEN is not configured",
+            ):
+                fetch_edats_document("P.AKLAN2026-10184")
+
+    def test_subject_comparison_ignores_case_and_extra_whitespace(self):
+        self.assertTrue(subjects_match("  QUARTERLY\n report ", "Quarterly report"))
+        self.assertFalse(subjects_match("Quarterly report revised", "Quarterly report"))
+
+    @patch("mails.views.fetch_edats_document")
+    def test_subject_mismatch_warns_but_allows_tracking_and_sending(self, lookup):
+        lookup.return_value = {
+            **self.edats_document,
+            "subject": "Different subject",
+        }
+
+        url = reverse("mails:edats_acknowledgement", args=[self.email.pk])
+        post_data = {
+            "tracking_number": self.edats_document["tracking_number"],
+            "template": self.template.pk,
+        }
+        preview = self.client.post(url, {**post_data, "action": "preview"})
+
+        self.assertEqual(preview.status_code, 200)
+        self.assertTrue(preview.context["previewed"])
+        self.assertFalse(preview.context["edats_subject_matches"])
+        self.assertContains(preview, "alert-warning")
+        self.assertContains(preview, "These subjects differ")
+        self.email.refresh_from_db()
+        self.assertEqual(
+            self.email.edats_tracking_number,
+            self.edats_document["tracking_number"],
+        )
+
+        with patch.object(
+            AppConfiguration,
+            "get_smtp_app_password",
+            return_value="app-password",
+        ), patch("mails.acknowledgements.smtplib.SMTP_SSL") as smtp_ssl:
+            smtp = smtp_ssl.return_value.__enter__.return_value
+            smtp.send_message.return_value = {}
+            sent = self.client.post(
+                url,
+                {
+                    **post_data,
+                    "action": "send",
+                    "preview_token": preview.context["preview_token"],
+                },
+            )
+
+        self.assertEqual(sent.status_code, 302)
+        self.assertEqual(
+            Acknowledgement.objects.get(email=self.email).status,
+            Acknowledgement.Status.SENT,
+        )
+
+    @patch("mails.views.fetch_edats_document")
+    def test_tracking_can_be_verified_without_reply_headers(self, lookup):
+        lookup.return_value = self.edats_document
+        self.email.message_id = ""
+        self.email.save(update_fields=["message_id"])
+
+        response = self.client.post(
+            reverse("mails:edats_acknowledgement", args=[self.email.pk]),
+            {
+                "tracking_number": self.edats_document["tracking_number"],
+                "template": self.template.pk,
+                "action": "verify",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.email.refresh_from_db()
+        self.assertEqual(
+            self.email.edats_tracking_number,
+            self.edats_document["tracking_number"],
+        )
+
+    def test_email_detail_has_edats_acknowledgement_action(self):
+        response = self.client.get(reverse("mails:detail", args=[self.email.pk]))
+
+        self.assertContains(response, "Send EDATS acknowledgement")
+        self.assertContains(
+            response,
+            reverse("mails:edats_acknowledgement", args=[self.email.pk]),
+        )
+
+    @patch("mails.views.fetch_edats_document")
+    def test_tracking_preview_sends_html_reply_after_subject_verification(self, lookup):
+        lookup.return_value = self.edats_document
+        url = reverse("mails:edats_acknowledgement", args=[self.email.pk])
+        post_data = {
+            "tracking_number": self.edats_document["tracking_number"],
+            "template": self.template.pk,
+        }
+
+        preview = self.client.post(
+            url,
+            {**post_data, "action": "preview"},
+        )
+        self.assertEqual(preview.status_code, 200)
+        self.assertTrue(preview.context["previewed"])
+        self.email.refresh_from_db()
+        self.assertEqual(
+            self.email.edats_tracking_number,
+            self.edats_document["tracking_number"],
+        )
+
+        with patch.object(
+            AppConfiguration,
+            "get_smtp_app_password",
+            return_value="app-password",
+        ), patch("mails.acknowledgements.smtplib.SMTP_SSL") as smtp_ssl:
+            smtp = smtp_ssl.return_value.__enter__.return_value
+            smtp.send_message.return_value = {}
+            sent = self.client.post(
+                url,
+                {
+                    **post_data,
+                    "action": "send",
+                    "preview_token": preview.context["preview_token"],
+                },
+            )
+
+        self.assertEqual(sent.status_code, 302)
+        acknowledgement = Acknowledgement.objects.get(email=self.email)
+        self.assertEqual(acknowledgement.status, Acknowledgement.Status.SENT)
+        self.assertIn(self.edats_document["tracking_url"], acknowledgement.body_html)
+        self.assertIn("Track this document", acknowledgement.body_html)
+        sent_message = smtp.send_message.call_args.args[0]
+        self.assertEqual(
+            sent_message.get_body(preferencelist=("html",)).get_content(),
+            acknowledgement.body_html,
+        )

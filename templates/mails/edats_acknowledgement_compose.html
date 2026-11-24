@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+
+{% block title %}Send EDATS acknowledgement · MailPrint{% endblock %}
+
+{% block extra_head %}
+<style>
+  .edats-preview-frame {
+    display: block;
+    width: 100%;
+    height: 28rem;
+    border: 1px solid var(--bs-border-color);
+    border-radius: .375rem;
+    background: #fff;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="mx-auto" style="max-width: 1000px">
+  <div class="mb-3">
+    <a href="{% url 'mails:detail' email.pk %}" class="link-secondary text-decoration-none">← Email detail</a>
+    <h1 class="h2 mt-2">Send EDATS acknowledgement</h1>
+    <p class="text-body-secondary mb-0">
+      Link an existing EDATS document to
+      <strong>{{ email.sender|default:"(unknown sender)" }}</strong>
+      about “{{ email.subject|default:"(no subject)" }}”.
+    </p>
+  </div>
+
+  <form method="post" class="card card-body shadow-sm">
+    {% csrf_token %}
+    {% if form.non_field_errors %}
+      <div class="alert alert-danger">{{ form.non_field_errors }}</div>
+    {% endif %}
+    <div class="mb-3">
+      <label class="form-label" for="{{ form.tracking_number.id_for_label }}">{{ form.tracking_number.label }}</label>
+      {{ form.tracking_number }}
+      {% for error in form.tracking_number.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}
+      <div class="form-text">The number is checked with EDATS and saved to this email. Subject differences are shown as a warning, but do not prevent you from continuing.</div>
+    </div>
+    <div class="mb-3">
+      <label class="form-label" for="{{ form.template.id_for_label }}">{{ form.template.label }}</label>
+      {{ form.template }}
+      {% for error in form.template.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}
+      <div class="form-text">Manage the message and HTML design on the Templates page.</div>
+    </div>
+
+    {% if edats_document %}
+      <section class="alert {% if edats_subject_matches %}alert-success{% else %}alert-warning{% endif %}" aria-labelledby="edats-result-heading">
+        <h2 class="h6" id="edats-result-heading">EDATS document check</h2>
+        {% if not edats_subject_matches %}
+          <p>These subjects differ. Check the details and continue only if this is the correct document.</p>
+        {% endif %}
+        <dl class="row mb-0">
+          <dt class="col-sm-3">Tracking number</dt><dd class="col-sm-9 text-break">{{ edats_document.tracking_number }}</dd>
+          <dt class="col-sm-3">EDATS subject</dt><dd class="col-sm-9 text-break">{{ edats_document.subject }}</dd>
+          <dt class="col-sm-3">EDATS sender</dt><dd class="col-sm-9 text-break">{{ edats_document.sender|default:"—" }}</dd>
+        </dl>
+      </section>
+    {% endif %}
+
+    {% if email.acknowledgements.all %}
+      <div class="alert alert-warning">This email has acknowledgement history. Sending another reply requires explicit confirmation.</div>
+    {% endif %}
+
+    {% if previewed %}
+      <section class="border rounded p-3 mb-3" aria-labelledby="preview-heading">
+        <h2 class="h5" id="preview-heading">Message preview</h2>
+        <dl class="row small">
+          <dt class="col-sm-2">To</dt><dd class="col-sm-10 text-break">{{ preview_recipient }}</dd>
+          <dt class="col-sm-2">Subject</dt><dd class="col-sm-10 text-break">{{ preview_subject }}</dd>
+        </dl>
+        <iframe class="edats-preview-frame" title="EDATS acknowledgement preview" sandbox="" srcdoc="{{ preview_html_srcdoc }}"></iframe>
+      </section>
+    {% endif %}
+
+    {% if duplicate_confirmation_required or email.acknowledged %}
+      <div class="form-check mb-3">
+        {{ form.confirm_duplicate }}
+        <label class="form-check-label" for="{{ form.confirm_duplicate.id_for_label }}">{{ form.confirm_duplicate.label }}</label>
+      </div>
+    {% endif %}
+
+    <div class="d-flex flex-wrap gap-2">
+      <button class="btn btn-outline-primary" type="submit" name="action" value="verify">Verify tracking number</button>
+      <button class="btn btn-outline-primary" type="submit" name="action" value="preview">Preview acknowledgement</button>
+      {% if previewed %}
+        <input type="hidden" name="preview_token" value="{{ preview_token }}">
+        <button class="btn btn-success" type="submit" name="action" value="send">Send acknowledgement</button>
+      {% endif %}
+      <a class="btn btn-outline-secondary" href="{% url 'mails:detail' email.pk %}">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

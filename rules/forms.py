@@ -3,7 +3,11 @@ import re
 from django import forms
 
 from core.models import AppConfiguration
-from mails.acknowledgements import AcknowledgementError, validate_acknowledgement_template
+from mails.acknowledgements import (
+    AcknowledgementError,
+    validate_acknowledgement_html_template,
+    validate_acknowledgement_template,
+)
 
 from .models import AcknowledgementTemplate, FilterRule
 from printing.models import PrinterProfile
@@ -196,13 +200,28 @@ def schedule_form_for(configuration, data=None):
 class AcknowledgementTemplateForm(forms.ModelForm):
     class Meta:
         model = AcknowledgementTemplate
-        fields = ["name", "body", "enabled", "is_default"]
+        fields = [
+            "name",
+            "body",
+            "body_html",
+            "enabled",
+            "is_default",
+            "is_tracking_template",
+        ]
         widgets = {
             "body": forms.Textarea(attrs={"rows": 8}),
+            "body_html": forms.Textarea(attrs={"rows": 16}),
         }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.fields["body_html"].help_text = (
+            "Optional HTML version; required for EDATS tracking templates. "
+            "Inline styles work best in email clients."
+        )
+        self.fields["is_tracking_template"].help_text = (
+            "Use this template for EDATS tracking acknowledgements rather than ordinary replies."
+        )
         for field in self.fields.values():
             if isinstance(field.widget, forms.CheckboxInput):
                 field.widget.attrs["class"] = "form-check-input"
@@ -219,10 +238,29 @@ class AcknowledgementTemplateForm(forms.ModelForm):
             raise forms.ValidationError(str(exc)) from exc
         return body
 
+    def clean_body_html(self):
+        body_html = self.cleaned_data["body_html"]
+        if body_html:
+            try:
+                validate_acknowledgement_html_template(body_html)
+            except AcknowledgementError as exc:
+                raise forms.ValidationError(str(exc)) from exc
+        return body_html
+
     def clean(self):
         cleaned_data = super().clean()
         if cleaned_data.get("is_default") and not cleaned_data.get("enabled"):
             self.add_error("enabled", "The default acknowledgement template must be enabled.")
+        if cleaned_data.get("is_default") and cleaned_data.get("is_tracking_template"):
+            self.add_error(
+                "is_default",
+                "An EDATS tracking template cannot be the automatic acknowledgement default.",
+            )
+        if cleaned_data.get("is_tracking_template") and not cleaned_data.get("body_html"):
+            self.add_error(
+                "body_html",
+                "EDATS tracking templates require an HTML message body.",
+            )
         return cleaned_data
 
     def _get_validation_exclusions(self):

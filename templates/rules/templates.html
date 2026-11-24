@@ -7,7 +7,7 @@
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
     <div>
       <h1 class="h2 mb-1">Acknowledgement templates</h1>
-      <p class="text-body-secondary mb-0">Use {sender_name}, {subject}, {date}, and {office_name} in message bodies.</p>
+      <p class="text-body-secondary mb-0">Use the supported message variables in plain-text and HTML template bodies.</p>
     </div>
     <a class="btn btn-primary" href="{% url 'rules:template_create' %}">Add template</a>
   </div>
@@ -17,12 +17,13 @@
     <div class="table-responsive">
       <table class="table table-hover align-middle mb-0">
         <thead class="table-light">
-          <tr><th>Name</th><th>Default</th><th>Enabled</th><th>Message body</th><th></th></tr>
+          <tr><th>Name</th><th>Type</th><th>Default</th><th>Enabled</th><th>Message body</th><th></th></tr>
         </thead>
         <tbody>
           {% for template in templates %}
             <tr>
               <td><a href="{% url 'rules:template_edit' template.pk %}" class="fw-semibold">{{ template.name }}</a></td>
+              <td>{% if template.is_tracking_template %}<span class="badge text-bg-success">EDATS tracking</span>{% else %}Email acknowledgement{% endif %}</td>
               <td>{% if template.is_default %}<span class="badge text-bg-primary">Default</span>{% else %}—{% endif %}</td>
               <td>{% if template.enabled %}Yes{% else %}No{% endif %}</td>
               <td><span class="d-inline-block text-truncate" style="max-width: 32rem">{{ template.body }}</span></td>
@@ -34,7 +35,7 @@
               </td>
             </tr>
           {% empty %}
-            <tr><td colspan="5" class="text-center text-body-secondary py-4">No acknowledgement templates yet.</td></tr>
+            <tr><td colspan="6" class="text-center text-body-secondary py-4">No acknowledgement templates yet.</td></tr>
           {% endfor %}
         </tbody>
       </table>

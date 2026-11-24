@@ -25,6 +25,8 @@ class ReceivedEmail(models.Model):
     cc_recipients = models.JSONField(default=list, blank=True)
     bcc_recipients = models.JSONField(default=list, blank=True)
     subject = models.TextField(blank=True)
+    edats_tracking_number = models.CharField(max_length=100, blank=True)
+    edats_sender_name = models.CharField(max_length=255, blank=True)
     date_received = models.DateTimeField(null=True, blank=True, db_index=True)
     body_text = models.TextField(blank=True)
     body_html = models.TextField(blank=True)

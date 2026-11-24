@@ -129,7 +129,10 @@
     </div>
     <div class="gap-2 email-actions">
       <a class="btn btn-outline-primary email-action-button" href="{% url 'mails:acknowledgement' email.pk %}">
-        Send acknowledgement
+        Send email acknowledgement
+      </a>
+      <a class="btn btn-outline-success email-action-button" href="{% url 'mails:edats_acknowledgement' email.pk %}">
+        Send EDATS acknowledgement
       </a>
       <form method="get" action="{% url 'mails:client_print_email' email.pk %}" class="email-action-form" target="_blank" rel="noopener">
         <button class="btn btn-outline-primary email-action-button" type="submit">Print email on this device</button>
@@ -329,6 +332,21 @@
     </div>
 
     <div class="col-12 col-xl-4">
+      {% if email.edats_tracking_number %}
+        <section class="card shadow-sm mb-3">
+          <div class="card-header bg-white"><h2 class="h5 mb-0">EDATS tracking</h2></div>
+          <div class="card-body">
+            <div class="fw-semibold text-break">{{ email.edats_tracking_number }}</div>
+            {% if email.edats_sender_name %}
+              <div class="small text-body-secondary">EDATS sender: {{ email.edats_sender_name }}</div>
+            {% endif %}
+            {% if edats_tracking_url %}
+              <a class="btn btn-sm btn-outline-primary mt-2" href="{{ edats_tracking_url }}" target="_blank" rel="noopener noreferrer">Open public tracking page</a>
+            {% endif %}
+            <a class="btn btn-sm btn-outline-secondary mt-2" href="{% url 'mails:edats_acknowledgement' email.pk %}">Verify / update tracking</a>
+          </div>
+        </section>
+      {% endif %}
       <section class="card shadow-sm mb-3">
         <div class="card-header bg-white"><h2 class="h5 mb-0">Print history</h2></div>
         <div class="list-group list-group-flush">
