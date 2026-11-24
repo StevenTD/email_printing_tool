@@ -652,3 +652,22 @@ class EmailHtmlConversionTests(TestCase):
         self.assertNotIn("onclick", html)
         self.assertIn("<p>Hello</p>", html)
         self.assertIn("Content-Security-Policy", html)
+
+    def test_html_css_formatting_is_preserved_and_active_markup_is_removed(self):
+        email = ReceivedEmail(
+            imap_uid=2,
+            body_html=(
+                "<html><head><style>.notice { color: #123456; }</style></head>"
+                '<body><p class="notice" style="font-weight: bold" onclick="bad()">'
+                "Formatted message</p><script>unsafe()</script></body></html>"
+            ),
+        )
+
+        html = build_email_html(email)
+
+        self.assertIn("<style>.notice { color: #123456; }</style>", html)
+        self.assertIn('class="notice"', html)
+        self.assertIn('style="font-weight: bold;"', html)
+        self.assertIn("Formatted message", html)
+        self.assertNotIn("<script>", html)
+        self.assertNotIn("onclick", html)

@@ -131,6 +131,15 @@
       <a class="btn btn-outline-primary email-action-button" href="{% url 'mails:acknowledgement' email.pk %}">
         Send acknowledgement
       </a>
+      <form method="get" action="{% url 'mails:client_print_email' email.pk %}" class="email-action-form" target="_blank" rel="noopener">
+        <button class="btn btn-outline-primary email-action-button" type="submit">Print email on this device</button>
+        {% if has_sent_replies %}
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="include_replies" value="1" id="client-print-include-replies">
+            <label class="form-check-label" for="client-print-include-replies">Include sent replies</label>
+          </div>
+        {% endif %}
+      </form>
       {% if has_printable_attachments %}
         <form method="post" action="{% url 'mails:action' email.pk 'print_attachments' %}" class="email-action-form">
           {% csrf_token %}
@@ -295,7 +304,12 @@
                   </div>
                 </div>
                 {% if attachment.file %}
-                  <a class="btn btn-sm btn-outline-primary align-self-start" href="{% url 'mails:download_attachment' attachment.pk %}">Download</a>
+                  <div class="d-flex flex-wrap gap-2">
+                    <a class="btn btn-sm btn-outline-primary align-self-start" href="{% url 'mails:download_attachment' attachment.pk %}">Download</a>
+                    {% if attachment.printable %}
+                      <a class="btn btn-sm btn-outline-primary align-self-start" href="{% url 'mails:client_print_attachment' attachment.pk %}" target="_blank" rel="noopener">Print on this device</a>
+                    {% endif %}
+                  </div>
                 {% endif %}
               </div>
               {% if attachment.file and attachment.content_type|slice:":6" == "image/" %}

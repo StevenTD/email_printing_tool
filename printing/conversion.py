@@ -6,7 +6,7 @@ from pathlib import Path
 from decouple import config
 from django.utils import timezone
 from mails.models import Acknowledgement
-from mails.rendering import sanitize_email_html
+from mails.rendering import build_email_display_content, sanitize_email_display_html
 from PIL import Image, UnidentifiedImageError
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import sync_playwright
@@ -27,10 +27,7 @@ class ConversionError(Exception):
 
 
 def build_email_html(email, *, include_replies=False):
-    if email.body_html:
-        body = sanitize_email_html(email.body_html)
-    else:
-        body = f"<pre>{escape(email.body_text or '(No body content.)')}</pre>"
+    body = build_email_display_content(email.body_html, email.body_text)
 
     replies_html = ""
     if include_replies and email.pk:
@@ -182,7 +179,7 @@ def _reply_html(reply):
     sender = escape(reply.sender or "You")
     recipient = escape(reply.recipient or "Unknown recipient")
     sent_at = escape(_format_datetime(reply.sent_at) or "Date unavailable")
-    safe_body_html = sanitize_email_html(reply.body_html)
+    safe_body_html = sanitize_email_display_html(reply.body_html)
     if safe_body_html:
         body = safe_body_html
     elif reply.body and (not reply.body_html or reply.body != reply.body_html):

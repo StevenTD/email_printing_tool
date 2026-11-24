@@ -162,7 +162,18 @@ def sanitize_email_html(value):
     )
 
 
-def build_email_display_document(body_html, body_text):
+def sanitize_email_display_html(value):
+    return bleach.clean(
+        value,
+        tags=ALLOWED_EMAIL_DISPLAY_TAGS,
+        attributes=_allow_email_display_attribute,
+        protocols=["data", "http", "https", "mailto"],
+        strip=True,
+        css_sanitizer=EMAIL_DISPLAY_CSS_SANITIZER,
+    )
+
+
+def build_email_display_content(body_html, body_text):
     content = body_html
     if not content:
         content = body_text or "(No body content.)"
@@ -176,14 +187,11 @@ def build_email_display_document(body_html, body_text):
         if _contains_html_markup(decoded_content):
             content = decoded_content
 
-    safe_content = bleach.clean(
-        content,
-        tags=ALLOWED_EMAIL_DISPLAY_TAGS,
-        attributes=_allow_email_display_attribute,
-        protocols=["data", "http", "https", "mailto"],
-        strip=True,
-        css_sanitizer=EMAIL_DISPLAY_CSS_SANITIZER,
-    )
+    return sanitize_email_display_html(content)
+
+
+def build_email_display_document(body_html, body_text):
+    safe_content = build_email_display_content(body_html, body_text)
     return f"""<!doctype html>
 <html lang="en">
 <head>

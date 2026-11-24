@@ -11,6 +11,11 @@ urlpatterns = [
     path("inbox/bulk-action/", views.bulk_action, name="bulk_action"),
     path("emails/<int:email_id>/", views.email_detail, name="detail"),
     path(
+        "emails/<int:email_id>/client-print/",
+        views.client_print_email,
+        name="client_print_email",
+    ),
+    path(
         "emails/<int:email_id>/acknowledgement/",
         views.acknowledgement_compose,
         name="acknowledgement",
@@ -20,6 +25,11 @@ urlpatterns = [
         "attachments/<int:attachment_id>/download/",
         views.download_attachment,
         name="download_attachment",
+    ),
+    path(
+        "attachments/<int:attachment_id>/client-print/",
+        views.client_print_attachment,
+        name="client_print_attachment",
     ),
     path(
         "attachments/<int:attachment_id>/preview/",

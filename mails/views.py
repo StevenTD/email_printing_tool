@@ -1,4 +1,7 @@
 import hashlib
+import shutil
+import tempfile
+from io import BytesIO
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -14,6 +17,11 @@ from django.views.decorators.http import require_POST
 
 from core.access import is_mailprint_admin, require_mailprint_operator
 from core.models import AppConfiguration, AuditLog
+from printing.conversion import (
+    ConversionError,
+    convert_attachment_to_pdf,
+    render_email_to_pdf,
+)
 from printing.models import PrintJob, PrintLog
 from printing.pipeline import PrintPipelineError, create_print_job
 
@@ -449,6 +457,68 @@ def download_attachment(request, attachment_id):
         attachment.filename,
         "application/octet-stream",
         as_attachment=True,
+    )
+
+
+def _client_print_pdf_response(pdf_file, filename):
+    response = FileResponse(
+        pdf_file,
+        as_attachment=False,
+        filename=filename,
+        content_type="application/pdf",
+    )
+    response["Cache-Control"] = "private, no-store"
+    response["Content-Security-Policy"] = "sandbox allow-modals; default-src 'none'"
+    response["X-Content-Type-Options"] = "nosniff"
+    response["X-Frame-Options"] = "SAMEORIGIN"
+    return response
+
+
+@login_required
+def client_print_email(request, email_id):
+    require_mailprint_operator(request.user)
+    email = get_object_or_404(ReceivedEmail, pk=email_id)
+    try:
+        pdf = render_email_to_pdf(
+            email,
+            include_replies=request.GET.get("include_replies") == "1",
+        )
+    except ConversionError as exc:
+        messages.error(request, f"Could not prepare the email PDF: {exc}")
+        return redirect("mails:detail", email_id=email.pk)
+
+    return _client_print_pdf_response(
+        BytesIO(pdf),
+        f"email-{email.pk}.pdf",
+    )
+
+
+@login_required
+def client_print_attachment(request, attachment_id):
+    require_mailprint_operator(request.user)
+    attachment = get_object_or_404(
+        EmailAttachment,
+        pk=attachment_id,
+        printable=True,
+    )
+    if not attachment.file:
+        raise Http404("Attachment file is not available.")
+
+    pdf_file = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024, mode="w+b")
+    try:
+        with tempfile.TemporaryDirectory(prefix="mailprint-client-") as directory:
+            pdf_path = convert_attachment_to_pdf(attachment, directory)
+            with pdf_path.open("rb") as source:
+                shutil.copyfileobj(source, pdf_file)
+    except (ConversionError, OSError, ValueError) as exc:
+        pdf_file.close()
+        messages.error(request, f"Could not prepare the attachment PDF: {exc}")
+        return redirect("mails:detail", email_id=attachment.email_id)
+
+    pdf_file.seek(0)
+    return _client_print_pdf_response(
+        pdf_file,
+        f"attachment-{attachment.pk}.pdf",
     )
 
 

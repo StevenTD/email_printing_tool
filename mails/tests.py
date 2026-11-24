@@ -561,6 +561,73 @@ class MailInboxViewTests(TestCase):
         self.assertNotContains(response, "onclick")
         self.assertNotContains(response, "invalid.test")
 
+    def test_client_email_print_returns_pdf_without_queueing_job(self):
+        with patch(
+            "mails.views.render_email_to_pdf",
+            return_value=b"%PDF-1.7 email",
+        ) as render_pdf:
+            response = self.client.get(
+                reverse("mails:client_print_email", args=[self.email.pk]),
+                {"include_replies": "1"},
+            )
+            payload = b"".join(response.streaming_content)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        self.assertIn("inline;", response["Content-Disposition"])
+        self.assertIn("allow-modals", response["Content-Security-Policy"])
+        self.assertEqual(payload, b"%PDF-1.7 email")
+        render_pdf.assert_called_once_with(self.email, include_replies=True)
+        self.assertFalse(PrintJob.objects.exists())
+        self.email.refresh_from_db()
+        self.assertEqual(self.email.status, ReceivedEmail.Status.NEW)
+
+    def test_client_print_attachment_converts_and_returns_inline_pdf(self):
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                attachment = EmailAttachment.objects.create(
+                    email=self.email,
+                    filename="report.pdf",
+                    content_type="application/pdf",
+                    printable=True,
+                )
+                attachment.file.save(
+                    "report.pdf",
+                    ContentFile(b"%PDF-1.7 attachment"),
+                    save=True,
+                )
+                response = self.client.get(
+                    reverse(
+                        "mails:client_print_attachment",
+                        args=[attachment.pk],
+                    )
+                )
+                payload = b"".join(response.streaming_content)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        self.assertIn("inline;", response["Content-Disposition"])
+        self.assertEqual(payload, b"%PDF-1.7 attachment")
+        self.assertFalse(PrintJob.objects.exists())
+
+    def test_email_detail_offers_client_print_actions(self):
+        attachment = EmailAttachment.objects.create(
+            email=self.email,
+            filename="report.pdf",
+            content_type="application/pdf",
+            printable=True,
+            file="mail/report.pdf",
+        )
+
+        response = self.client.get(reverse("mails:detail", args=[self.email.pk]))
+
+        self.assertContains(response, "Print email on this device")
+        self.assertContains(response, "Print on this device")
+        self.assertContains(
+            response,
+            reverse("mails:client_print_attachment", args=[attachment.pk]),
+        )
+
     def test_email_detail_preserves_html_css_and_renders_html_in_plain_text(self):
         self.email.body_html = (
             "<html><head><style>.notice { color: #123456; }</style></head>"
