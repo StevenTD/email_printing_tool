@@ -186,6 +186,86 @@ class MailStorageTests(TestCase):
 
 
 class MailFetcherTests(TestCase):
+    def test_checks_newest_uids_first_and_continues_after_existing_email_error(self):
+        older_email = ReceivedEmail.objects.create(
+            imap_folder="INBOX",
+            imap_uidvalidity=987,
+            imap_uid=10,
+            subject="Older email",
+            status=ReceivedEmail.Status.NEW,
+        )
+        newer_email = ReceivedEmail.objects.create(
+            imap_folder="INBOX",
+            imap_uidvalidity=987,
+            imap_uid=20,
+            subject="Newer email",
+            status=ReceivedEmail.Status.NEW,
+        )
+
+        class FakeIMAP:
+            def __init__(self):
+                self.marked_seen = []
+
+            def login(self, username, password):
+                return "OK", [b"logged in"]
+
+            def select(self, folder):
+                return "OK", [b"2"]
+
+            def response(self, name):
+                return name, [b"987"]
+
+            def uid(self, command, *args):
+                if command == "SEARCH":
+                    return "OK", [b"10 20"]
+                if command == "STORE":
+                    self.marked_seen.append(args[0])
+                    return "OK", [args[0].encode("ascii")]
+                raise AssertionError(f"Unexpected IMAP command: {command}")
+
+            def logout(self):
+                return "BYE", [b"logged out"]
+
+        fake_imap = FakeIMAP()
+        configuration = AppConfiguration(
+            imap_email="mailbox@example.test",
+            imap_folder="INBOX",
+            imap_sent_folder="",
+        )
+        status_messages = []
+        attempted_uids = []
+
+        def process_email(email):
+            attempted_uids.append(email.imap_uid)
+            if email.imap_uid == older_email.imap_uid:
+                raise RuntimeError("Could not process older email.")
+
+        with patch.object(
+            AppConfiguration,
+            "get_imap_app_password",
+            return_value="app-password",
+        ), patch(
+            "mails.fetcher.process_incoming_email",
+            side_effect=process_email,
+        ):
+            summary = MailFetcher(
+                configuration,
+                connection_factory=lambda *args, **kwargs: fake_imap,
+                status_callback=status_messages.append,
+            ).fetch_messages()
+
+        self.assertEqual(attempted_uids, [newer_email.imap_uid, older_email.imap_uid])
+        self.assertEqual(fake_imap.marked_seen, ["20"])
+        self.assertEqual(summary.errors, 1)
+        self.assertIn("Checking inbox messages: 1 of 2 (UID 20).", status_messages)
+        self.assertIn("Checking inbox messages: 2 of 2 (UID 10).", status_messages)
+        self.assertTrue(
+            WorkerLog.objects.filter(
+                component="imap",
+                message__contains="UID 10: Could not process older email.",
+            ).exists()
+        )
+
     def test_imports_manual_gmail_reply_and_advances_sent_cursor(self):
         email = ReceivedEmail.objects.create(
             message_id="<original@example.test>",

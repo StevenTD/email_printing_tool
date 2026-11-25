@@ -317,24 +317,26 @@ class MailFetcher:
                 f"Found {summary.discovered} inbox message(s) to check."
             )
 
+            message_uids.sort(key=int, reverse=True)
             for index, uid_bytes in enumerate(message_uids, start=1):
                 uid = int(uid_bytes)
-                if index == 1 or index % 100 == 0:
-                    self._report_status(
-                        f"Checking inbox messages: {index} of {summary.discovered}."
-                    )
-                existing = ReceivedEmail.objects.filter(
-                    imap_folder=folder,
-                    imap_uidvalidity=uidvalidity,
-                    imap_uid=uid,
-                ).first()
-                if existing is not None:
-                    if existing.status == ReceivedEmail.Status.NEW:
-                        process_incoming_email(existing)
-                    self._mark_seen(connection, uid)
-                    summary.duplicates += 1
-                    continue
+                self._report_status(
+                    f"Checking inbox messages: {index} of {summary.discovered} "
+                    f"(UID {uid})."
+                )
                 try:
+                    existing = ReceivedEmail.objects.filter(
+                        imap_folder=folder,
+                        imap_uidvalidity=uidvalidity,
+                        imap_uid=uid,
+                    ).first()
+                    if existing is not None:
+                        if existing.status == ReceivedEmail.Status.NEW:
+                            process_incoming_email(existing)
+                        self._mark_seen(connection, uid)
+                        summary.duplicates += 1
+                        continue
+
                     raw_message = self._fetch_raw_message(connection, uid)
                     if len(raw_message) > self.max_email_bytes:
                         raise ValueError(
@@ -359,6 +361,9 @@ class MailFetcher:
                 except Exception as exc:
                     summary.errors += 1
                     _log(WorkerLog.Level.ERROR, f"UID {uid}: {exc}")
+                    self._report_status(
+                        f"Could not process inbox UID {uid}: {exc}; continuing."
+                    )
             self._report_status(
                 f"Inbox check complete: {summary.stored} stored, "
                 f"{summary.duplicates} already stored."
