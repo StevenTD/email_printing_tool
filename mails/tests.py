@@ -874,6 +874,10 @@ class AcknowledgementTests(TestCase):
             self.configuration,
         )
 
+        self.assertEqual(
+            str(message["From"]),
+            "Main Office <mailbox@example.test>",
+        )
         self.assertEqual(recipient, "sender@example.test")
         self.assertEqual(message["In-Reply-To"], self.email.message_id)
         self.assertEqual(

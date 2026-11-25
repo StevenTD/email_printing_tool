@@ -5,7 +5,7 @@ import ssl
 from email import message_from_bytes
 from email.message import EmailMessage as MimeEmailMessage
 from email.policy import default
-from email.utils import formatdate, make_msgid, parseaddr
+from email.utils import formataddr, formatdate, make_msgid, parseaddr
 from string import Formatter
 
 from django.core.exceptions import ImproperlyConfigured
@@ -144,7 +144,10 @@ def build_reply_message(
     reply_subject = subject if subject.casefold().startswith("re:") else f"Re: {subject}"
     references = _thread_references(email, parent_message_id)
     message = MimeEmailMessage()
-    message["From"] = configuration.imap_email
+    message["From"] = formataddr(
+        (configuration.office_name, configuration.imap_email),
+        charset="utf-8",
+    )
     message["To"] = recipient
     message["Subject"] = reply_subject
     message["Date"] = formatdate(localtime=True)
@@ -226,7 +229,7 @@ def send_acknowledgement(
             acknowledgement = Acknowledgement.objects.create(
                 email=locked_email,
                 recipient=recipient,
-                sender=str(message["From"]),
+                sender=configuration.imap_email,
                 subject=subject,
                 body=body,
                 body_html=(
