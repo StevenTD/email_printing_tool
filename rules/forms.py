@@ -215,6 +215,10 @@ class AcknowledgementTemplateForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.fields["body"].help_text = (
+            "Use {user_department} to include the sending user's department. "
+            "It is blank for automatic acknowledgements."
+        )
         self.fields["body_html"].help_text = (
             "Optional HTML version; required for EDATS tracking templates. "
             "Inline styles work best in email clients."

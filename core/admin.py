@@ -1,6 +1,28 @@
 from django.contrib import admin
+from django.contrib.auth import get_user_model
+from django.contrib.auth.admin import UserAdmin
 
-from .models import AppConfiguration, AuditLog, WorkerHeartbeat, WorkerLog
+from .models import (
+    AppConfiguration,
+    AuditLog,
+    UserProfile,
+    WorkerHeartbeat,
+    WorkerLog,
+)
+
+
+class UserProfileInline(admin.StackedInline):
+    model = UserProfile
+    can_delete = False
+    extra = 0
+
+
+class MailPrintUserAdmin(UserAdmin):
+    inlines = UserAdmin.inlines + (UserProfileInline,)
+
+
+admin.site.unregister(get_user_model())
+admin.site.register(get_user_model(), MailPrintUserAdmin)
 
 
 @admin.register(AppConfiguration)

@@ -13,7 +13,7 @@ from django.db import IntegrityError, transaction
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
-from core.models import AppConfiguration, AuditLog, WorkerLog
+from core.models import AppConfiguration, AuditLog, UserProfile, WorkerLog
 from core.access import OPERATOR_GROUP_NAME
 from .acknowledgements import (
     DuplicateAcknowledgementError,
@@ -467,13 +467,13 @@ class MailFetcherTests(TestCase):
 
 class MailInboxViewTests(TestCase):
     def setUp(self):
-        user = get_user_model().objects.create_user(
+        self.user = get_user_model().objects.create_user(
             username="operator",
             password="test-pass",
         )
         operator_group, _ = Group.objects.get_or_create(name=OPERATOR_GROUP_NAME)
-        user.groups.add(operator_group)
-        self.client.force_login(user)
+        self.user.groups.add(operator_group)
+        self.client.force_login(self.user)
         self.email = ReceivedEmail.objects.create(
             message_id="<view-test@example.test>",
             imap_folder="INBOX",
@@ -586,7 +586,11 @@ class MailInboxViewTests(TestCase):
         self.assertIn("inline;", response["Content-Disposition"])
         self.assertIn("allow-modals", response["Content-Security-Policy"])
         self.assertEqual(payload, b"%PDF-1.7 email")
-        render_pdf.assert_called_once_with(self.email, include_replies=True)
+        render_pdf.assert_called_once_with(
+            self.email,
+            include_replies=True,
+            user=self.user,
+        )
         self.assertFalse(PrintJob.objects.exists())
         self.email.refresh_from_db()
         self.assertEqual(self.email.status, ReceivedEmail.Status.NEW)
@@ -885,6 +889,29 @@ class AcknowledgementTests(TestCase):
             "<root@example.test> <received-ack@example.test>",
         )
         self.assertIn("Hello Sender Name, received Quarterly report for Main Office.", body)
+
+    def test_user_department_is_available_to_acknowledgement_templates(self):
+        user = get_user_model().objects.create_user(
+            username="operator",
+            password="test-pass",
+        )
+        UserProfile.objects.create(user=user, department="Records Unit")
+        self.template.body = "Handled by {user_department}."
+
+        with patch.object(
+            AppConfiguration,
+            "get_smtp_app_password",
+            return_value="app-password",
+        ), patch("mails.acknowledgements.smtplib.SMTP_SSL") as smtp_ssl:
+            smtp = smtp_ssl.return_value.__enter__.return_value
+            smtp.send_message.return_value = {}
+            acknowledgement = send_acknowledgement(
+                self.email,
+                self.template,
+                user=user,
+            )
+
+        self.assertEqual(acknowledgement.body, "Handled by Records Unit.")
 
     def test_duplicate_acknowledgement_requires_explicit_confirmation(self):
         user = get_user_model().objects.create_user(

@@ -182,7 +182,7 @@ def printer_test_page(request):
                 "This test page verifies MailPrint PDF rendering and printer selection."
             ),
         )
-        pdf_bytes = render_email_to_pdf(test_email)
+        pdf_bytes = render_email_to_pdf(test_email, user=request.user)
         profile = PrinterProfile.objects.filter(printer_name=printer_name).first()
 
         with tempfile.TemporaryDirectory(prefix="mailprint-test-") as directory:

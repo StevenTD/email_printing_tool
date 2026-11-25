@@ -209,6 +209,7 @@ def acknowledgement_compose(request, email_id):
                 email,
                 template,
                 configuration,
+                user=request.user,
             )
             preview_subject = str(preview_message["Subject"])
             action = request.POST.get("action")
@@ -454,6 +455,7 @@ def edats_acknowledgement_compose(request, email_id):
                         email,
                         template,
                         configuration,
+                        user=request.user,
                         extra_variables=extra_variables,
                         html_body_template=template.body_html,
                     )
@@ -780,6 +782,7 @@ def client_print_email(request, email_id):
         pdf = render_email_to_pdf(
             email,
             include_replies=request.GET.get("include_replies") == "1",
+            user=request.user,
         )
     except ConversionError as exc:
         messages.error(request, f"Could not prepare the email PDF: {exc}")

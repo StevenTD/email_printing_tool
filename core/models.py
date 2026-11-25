@@ -145,3 +145,20 @@ class WorkerLog(models.Model):
 
     def __str__(self):
         return f"{self.get_level_display()}: {self.message[:80]}"
+
+
+class UserProfile(models.Model):
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="mailprint_profile",
+    )
+    department = models.CharField(max_length=150, blank=True)
+
+    def __str__(self):
+        return self.department or self.user.get_username()
+
+
+def get_user_department(user):
+    profile = getattr(user, "mailprint_profile", None) if user is not None else None
+    return profile.department.strip() if profile else ""

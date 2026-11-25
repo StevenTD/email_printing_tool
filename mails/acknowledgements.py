@@ -12,7 +12,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from core.models import AppConfiguration, AuditLog, WorkerLog
+from core.models import AppConfiguration, AuditLog, WorkerLog, get_user_department
 from rules.models import AcknowledgementTemplate
 
 from .models import Acknowledgement, ReceivedEmail
@@ -27,6 +27,7 @@ ACKNOWLEDGEMENT_VARIABLES = {
     "tracking_base_url",
     "tracking_url",
     "edats_sender",
+    "user_department",
 }
 MESSAGE_ID_PATTERN = re.compile(r"<[^<>\s]+>")
 
@@ -43,7 +44,13 @@ class AcknowledgementSendError(AcknowledgementError):
     pass
 
 
-def _acknowledgement_variables(email, configuration, extra_variables=None):
+def _acknowledgement_variables(
+    email,
+    configuration,
+    extra_variables=None,
+    *,
+    user=None,
+):
     display_name, address = parseaddr(email.sender)
     if not address:
         raise AcknowledgementError("The sender address is missing or invalid.")
@@ -61,17 +68,26 @@ def _acknowledgement_variables(email, configuration, extra_variables=None):
         "tracking_base_url": "",
         "tracking_url": "",
         "edats_sender": "",
+        "user_department": get_user_department(user),
     }
     if extra_variables:
         variables.update(extra_variables)
     return variables
 
 
-def render_acknowledgement_body(email, template, configuration, extra_variables=None):
+def render_acknowledgement_body(
+    email,
+    template,
+    configuration,
+    extra_variables=None,
+    *,
+    user=None,
+):
     variables = _acknowledgement_variables(
         email,
         configuration,
         extra_variables=extra_variables,
+        user=user,
     )
     validate_acknowledgement_template(template.body)
     formatter = Formatter()
@@ -123,6 +139,7 @@ def build_reply_message(
     template,
     configuration,
     *,
+    user=None,
     extra_variables=None,
     html_body_template="",
 ):
@@ -137,6 +154,7 @@ def build_reply_message(
         email,
         configuration,
         extra_variables=extra_variables,
+        user=user,
     )
     validate_acknowledgement_template(template.body)
     body = Formatter().vformat(template.body, (), variables)
@@ -201,6 +219,7 @@ def send_acknowledgement(
         email,
         template,
         configuration,
+        user=user,
         extra_variables=extra_variables,
         html_body_template=html_body_template,
     )

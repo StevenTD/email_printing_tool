@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from cryptography.fernet import Fernet
 from django.test import Client, SimpleTestCase, TestCase
+from django.urls import reverse
 
 from core.access import ADMIN_GROUP_NAME, OPERATOR_GROUP_NAME
 from core.management.commands.run_worker import _configured_fetch_since_date
@@ -198,3 +199,24 @@ class SeedMailPrintCommandTests(TestCase):
             AcknowledgementTemplate.objects.filter(is_default=True).count(),
             1,
         )
+
+
+class UserDepartmentAdminTests(TestCase):
+    def test_department_can_be_set_from_user_admin(self):
+        admin_user = get_user_model().objects.create_superuser(
+            username="admin",
+            password="test-pass",
+            email="admin@example.test",
+        )
+        user = get_user_model().objects.create_user(
+            username="department-user",
+            password="test-pass",
+        )
+        self.client.force_login(admin_user)
+
+        response = self.client.get(
+            reverse("admin:auth_user_change", args=[user.pk])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Department")

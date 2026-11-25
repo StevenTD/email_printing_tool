@@ -2,7 +2,7 @@ from contextlib import nullcontext
 import tempfile
 from pathlib import Path
 from subprocess import CompletedProcess
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
 from django.core.files.base import ContentFile
@@ -10,10 +10,14 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
-from core.models import AppConfiguration, AuditLog
+from core.models import AppConfiguration, AuditLog, UserProfile
 from mails.models import Acknowledgement, EmailAttachment, ReceivedEmail
 
-from .conversion import build_email_footer_html, build_email_html
+from .conversion import (
+    build_email_footer_html,
+    build_email_html,
+    render_email_to_pdf,
+)
 from .forms import PrinterProfileForm
 from .models import PrintJob, PrintLog, PrinterProfile
 from .pipeline import (
@@ -326,6 +330,8 @@ class PrintPipelineTests(TestCase):
 
     def test_waits_for_each_print_to_leave_queue_before_sending_next_file(self):
         email = self.create_email()
+        user = get_user_model().objects.create_user(username="printer")
+        UserProfile.objects.create(user=user, department="Records Unit")
         with tempfile.TemporaryDirectory() as media_root:
             with override_settings(MEDIA_ROOT=media_root):
                 attachment = EmailAttachment.objects.create(
@@ -344,6 +350,7 @@ class PrintPipelineTests(TestCase):
                     print_email_body=True,
                     print_replies=True,
                     print_attachments=True,
+                    requested_by=user,
                 )
                 events = []
                 with patch(
@@ -367,7 +374,11 @@ class PrintPipelineTests(TestCase):
                     )
 
         self.assertEqual(completed, 2)
-        render_email.assert_called_once_with(email, include_replies=True)
+        render_email.assert_called_once_with(
+            email,
+            include_replies=True,
+            user=user,
+        )
         self.assertEqual(
             [event[0] for event in events],
             ["send", "wait", "send"],
@@ -597,9 +608,90 @@ class EmailHtmlConversionTests(TestCase):
 
         footer = build_email_footer_html(email)
         self.assertIn("Source email: Sender &lt;sender@example.test&gt;", footer)
-        self.assertIn("printed using MailPrint Email Monitoring Tool", footer)
+        self.assertIn(
+            "MAILPRINT EMAIL MONITORING SYSTEM DEVELOPED BY ICT UNIT -",
+            footer,
+        )
+        self.assertIn(">printed by ICT Unit</span>", footer)
+        self.assertIn("background:#f1f5f8", footer)
         self.assertIn('class="pageNumber"', footer)
         self.assertIn('class="totalPages"', footer)
+
+    def test_pdf_footer_uses_the_printing_users_department(self):
+        email = ReceivedEmail.objects.create(
+            imap_folder="INBOX",
+            imap_uidvalidity=987,
+            imap_uid=905,
+            subject="Quarterly report",
+            body_text="Report body",
+        )
+        user = get_user_model().objects.create_user(username="records-printer")
+        UserProfile.objects.create(user=user, department="Records Unit")
+
+        footer = build_email_footer_html(email, user=user)
+
+        self.assertIn(
+            "MAILPRINT EMAIL MONITORING SYSTEM DEVELOPED BY ICT UNIT -",
+            footer,
+        )
+        self.assertIn(">printed by Records Unit</span>", footer)
+        user_without_department = get_user_model().objects.create_user(
+            username="unassigned-printer",
+        )
+        fallback_footer = build_email_footer_html(
+            email,
+            user=user_without_department,
+        )
+        self.assertIn(">printed by ICT Unit</span>", fallback_footer)
+
+    def test_pdf_footer_is_built_before_playwright_starts(self):
+        email = ReceivedEmail(
+            imap_uid=906,
+            subject="Quarterly report",
+            body_text="Report body",
+        )
+        user = get_user_model().objects.create_user(username="pdf-printer")
+        UserProfile.objects.create(user=user, department="Records Unit")
+        playwright_active = False
+
+        class FakePlaywrightManager:
+            def __enter__(self):
+                nonlocal playwright_active
+                playwright_active = True
+                return playwright
+
+            def __exit__(self, _exc_type, _exc, _traceback):
+                nonlocal playwright_active
+                playwright_active = False
+
+        playwright = MagicMock()
+        browser = MagicMock()
+        context = MagicMock()
+        page = MagicMock()
+        page.pdf.return_value = b"%PDF-1.7"
+        playwright.chromium.launch.return_value = browser
+        browser.new_context.return_value = context
+        context.new_page.return_value = page
+
+        def build_footer(*args, **kwargs):
+            self.assertFalse(playwright_active)
+            return "resolved footer"
+
+        with patch(
+            "printing.conversion.sync_playwright",
+            return_value=FakePlaywrightManager(),
+        ), patch(
+            "printing.conversion.build_email_footer_html",
+            side_effect=build_footer,
+        ):
+            pdf = render_email_to_pdf(email, user=user)
+
+        self.assertEqual(pdf, b"%PDF-1.7")
+        page.pdf.assert_called_once()
+        self.assertEqual(
+            page.pdf.call_args.kwargs["footer_template"],
+            "resolved footer",
+        )
 
     def test_replies_are_included_only_when_requested_and_are_sanitized(self):
         email = ReceivedEmail.objects.create(

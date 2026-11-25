@@ -175,6 +175,7 @@ def _print_job_files(job, email, configuration, printer_name, dry_run):
                 body_pdf = render_email_to_pdf(
                     email,
                     include_replies=job.print_replies,
+                    user=job.requested_by,
                 )
                 email.body_pdf_file.save("body.pdf", ContentFile(body_pdf), save=True)
                 outputs.append(("Email body.pdf", Path(email.body_pdf_file.path)))

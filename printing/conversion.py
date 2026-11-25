@@ -5,6 +5,8 @@ from pathlib import Path
 
 from decouple import config
 from django.utils import timezone
+
+from core.models import get_user_department
 from mails.models import Acknowledgement
 from mails.rendering import build_email_display_content, sanitize_email_display_html
 from PIL import Image, UnidentifiedImageError
@@ -145,14 +147,15 @@ h2 {{ color: #173b63; font-size: 10pt; margin: 0 0 6px; text-transform: uppercas
 </html>"""
 
 
-def build_email_footer_html(email):
+def build_email_footer_html(email, *, user=None):
     sender = escape(email.sender or "Unknown sender")
+    department = escape(get_user_department(user) or "ICT Unit")
     return f"""<div style="font-family:Arial,sans-serif;font-size:8px;color:#526170;width:100%;padding:0 12mm;box-sizing:border-box;">
 <div style="border-top:1px solid #cbd5df;padding-top:5px;">
 Source email: {sender}
 </div>
 <div style="padding-top:3px;">
-Generated from this email and printed using MailPrint Email Monitoring Tool.
+MAILPRINT EMAIL MONITORING SYSTEM DEVELOPED BY ICT UNIT - <span style="font-weight:600;color:#405d78;background:#f1f5f8;padding:1px 3px;border-radius:2px;">printed by {department}</span>
 <span style="float:right;">Page <span class="pageNumber"></span> of <span class="totalPages"></span></span>
 </div>
 </div>"""
@@ -194,8 +197,9 @@ def _reply_html(reply):
     )
 
 
-def render_email_to_pdf(email, *, include_replies=False):
+def render_email_to_pdf(email, *, include_replies=False, user=None):
     html = build_email_html(email, include_replies=include_replies)
+    footer = build_email_footer_html(email, user=user)
     try:
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
@@ -209,7 +213,7 @@ def render_email_to_pdf(email, *, include_replies=False):
                     print_background=True,
                     display_header_footer=True,
                     header_template="<div></div>",
-                    footer_template=build_email_footer_html(email),
+                    footer_template=footer,
                     margin=PDF_PAGE_MARGINS,
                 )
             finally:
